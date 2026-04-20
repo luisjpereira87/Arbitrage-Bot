@@ -168,7 +168,9 @@ class ArbitrageScanner:
         t2 = (1000000 - f2) / 1000000
         t3 = (1000000 - f3) / 1000000
 
-        valor_final = capital * (q1 * t1) * (q2 * t2) * (q3 * t3)
+        margem_seguranca = 0.995
+
+        valor_final = (capital * (q1 * t1) * (q2 * t2) * (q3 * t3)) * margem_seguranca
         lucro_liquido = valor_final - capital - 0.25  # Desconto de $0.25 de Gas
         #if lucro_liquido > -0.10:
         #print(f"🔥 ALERTA DE LUCRO: ${lucro_liquido:.2f}")
