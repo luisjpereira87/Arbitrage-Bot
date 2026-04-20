@@ -116,7 +116,7 @@ class WalletManager:
                 print(f"⚠️ Abortado: Simulação falhou (Prejuízo ou Erro): {sim_error}")
                 return None
 
-
+            print(f"DEBUG ENTRADA: {val_in_wei} unidades (wei/min units)")
             nonce = self.w3.eth.get_transaction_count(self.account.address)
 
             # --- CÁLCULO DE TAXAS DINÂMICO E ROBUSTO ---

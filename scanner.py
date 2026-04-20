@@ -126,7 +126,7 @@ class ArbitrageScanner:
             liquidity = pool_contract.functions.liquidity().call()
             if liquidity < 10 ** 10: return None
 
-
+            print(f"Liquidez da Pool: {liquidity}")
             # 3. Cálculo do Preço (Ajustado para evitar o erro de subscriptable)
             slot0_data = pool_contract.functions.slot0().call()
 
@@ -223,7 +223,7 @@ class ArbitrageScanner:
                         q3, d3, f3 = res3
 
                         # 2. Calcula o lucro (baseado em $100 de capital)
-                        lucro = self.calcular_triangular(q1, f1, q2, f2, q3, f3, 30.0)
+                        lucro = self.calcular_triangular(q1, f1, q2, f2, q3, f3, 5.0)
 
                         if lucro > melhor_lucro:
                             melhor_lucro = lucro
@@ -301,7 +301,7 @@ class ArbitrageScanner:
                         tx_hash = self.wallet.executar_arbitragem(
                             self.melhor_config["pools"],
                             self.melhor_config["direcoes"],
-                            30.0
+                            5.0
                         )
 
                         if tx_hash:
