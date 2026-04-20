@@ -158,7 +158,7 @@ class ArbitrageScanner:
                 direcao_v3 = False
                 preco_final = 1 / price_t0_em_t1
 
-            print(f"DEBUG POOL {pool_address}: T0_Dec: {d0}, T1_Dec: {d1}, Price_Raw: {price_raw}")
+            #print(f"DEBUG POOL {pool_address}: T0_Dec: {d0}, T1_Dec: {d1}, Price_Raw: {price_raw}")
 
             return preco_final, direcao_v3, fee
 
@@ -190,6 +190,20 @@ class ArbitrageScanner:
         #print(f"   1. USDC -> ARB @ {q1}")
         #print(f"   2. ARB  -> GMX @ {q2}")
         #print(f"   3. GMX  -> USDC @ {q3}")
+
+        # Passo a passo da montanha-russa de preços
+        passo1 = capital * (q1 * t1)  # USDC -> Token A
+        passo2 = passo1 * (q2 * t2)  # Token A -> Token B
+        passo3 = passo2 * (q3 * t3)  # Token B -> USDC final
+
+        if lucro_liquido > 1.0:
+            print(f"\n--- 🧪 ANÁLISE DE ESCALA ---")
+            print(f"Entrada: ${capital:.2f} USDC")
+            print(f"Passo 1: {passo1:.6f} (Recebido de T2)")
+            print(f"Passo 2: {passo2:.6f} (Recebido de T3)")
+            print(f"Passo 3: {passo3:.6f} (USDC de volta)")
+            print(f"---------------------------\n")
+
         if lucro_liquido > -0.25:
             print(f"DEBUG: Q1: {q1} | Q2: {q2} | Q3: {q3} | Final: {valor_final}")
             print(f"👀 Oportunidade Próxima: ${lucro_liquido:.4f} | Rota: {q1:.6f}->{q2:.2f}->{q3:.4f}")
