@@ -103,51 +103,31 @@ class ArbitrageScanner:
 
     def get_quote(self, pool_address, token_in, token_out):
         try:
-            pool_address = self.w3.to_checksum_address(pool_address)
-            pool_contract = self.w3.eth.contract(address=pool_address, abi=self.pool_abi)
+            pool_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(pool_address),
+                abi=self.pool_abi
+            )
 
-            # Busca a fee diretamente da pool (ex: 3000 significa 0.3%)
-            fee = pool_contract.functions.fee().call()
-
-            # 1. VALIDAÇÃO REAL: A pool contém os dois tokens que eu quero trocar?
             t0 = pool_contract.functions.token0().call().lower()
             t1 = pool_contract.functions.token1().call().lower()
+            fee = pool_contract.functions.fee().call()
 
-            tokens_na_pool = [t0, t1]
-            if token_in.lower() not in tokens_na_pool or token_out.lower() not in tokens_na_pool:
-                # Se um dos tokens não pertence à pool, o swap é impossível.
-                return None
+            slot0 = pool_contract.functions.slot0().call()
+            sqrtPriceX96 = slot0[0] if isinstance(slot0, (list, tuple)) else slot0
 
-            # 2. Filtros de Liquidez e Saldo (Como já tinhas)
-            liquidity = pool_contract.functions.liquidity().call()
-            if liquidity < 10 ** 12: return None
-
-            #print(f"Liquidez da Pool: {liquidity}")
-            # 3. Cálculo do Preço (Ajustado para evitar o erro de subscriptable)
-            slot0_data = pool_contract.functions.slot0().call()
-
-            # Se vier uma lista/tuplo, pegamos o primeiro elemento.
-            # Se vier um inteiro, usamos o valor diretamente.
-            if isinstance(slot0_data, (list, tuple)):
-                sqrtPriceX96 = slot0_data[0]
-            else:
-                sqrtPriceX96 = slot0_data
-
-            # No get_quote, após pegar o sqrtPriceX96...
             d0 = self.get_token_decimals(t0)
             d1 = self.get_token_decimals(t1)
 
-            # Preço de 1 unidade de T0 expressa em T1
-            preco_t0_em_t1 = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
+            # PREÇO: Quantos T1 recebo por 1 unidade de T0
+            # Fórmula: (sqrt / 2^96)^2 * (10^d0 / 10^d1)
+            price_t0_em_t1 = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
 
             if token_in.lower() == t0:
-                direcao_v3 = True
-                preco_final = preco_t0_em_t1
+                # Entra T0 -> Sai T1. O preço já é quanto T1 recebo por T0.
+                return price_t0_em_t1, True, fee
             else:
-                direcao_v3 = False
-                preco_final = 1 / preco_t0_em_t1
-
-            return preco_final, direcao_v3, fee
+                # Entra T1 -> Sai T0. O preço é o inverso.
+                return 1 / price_t0_em_t1, False, fee
 
         except Exception as e:
             print(f"❌ Erro no get_quote!")
@@ -294,11 +274,11 @@ class ArbitrageScanner:
 
     def get_token_decimals(self, token_address):
         addr = token_address.lower()
-        if addr not in self.decimal_map:
-            # Se não está no mapa, o bot está a voar às cegas!
-            print(f"🚨 ALERTA: Token {addr} DESCONHECIDO! Usando 18 por segurança, mas o preço pode estar errado.")
-            return 18
-        return self.decimal_map[addr]
+        # Hardcode total: Se for este endereço, É 6 ou 8. Ponto final.
+        if addr == "0xaf88d065e77c8cc2239327c5edb3a432268e5831": return 6  # USDC
+        if addr == "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f": return 8  # WBTC
+
+        return self.decimal_map.get(addr, 18)
 
     def run_triangular(self):
         rotas = self.setup_triangulo()
