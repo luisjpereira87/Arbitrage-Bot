@@ -112,6 +112,19 @@ class WalletManager:
             lista_pools_checksum = [self.w3.to_checksum_address(p) for p in lista_pools]
             lista_tokens_checksum = [self.w3.to_checksum_address(t) for t in lista_tokens]
 
+            print(f"--- VALIDANDO ROTA NO CONTRATO ---")
+            print(f"Pools: {lista_pools_checksum}")
+            print(f"Tokens: {lista_tokens_checksum}")
+            print(f"Quantia: {val_in_wei} units")
+
+            print(f"\n--- DEBUG DE EXECUÇÃO ---")
+            print(f"💰 Capital: {amount_in_usd} USDC ({val_in_wei} wei)")
+            for i in range(len(lista_pools)):
+                dir_str = "T0 -> T1" if lista_direcoes[i] else "T1 -> T0"
+                print(
+                    f"Swap {i + 1}: Pool {lista_pools[i]} | Direção: {dir_str} | Token que vou PAGAR: {lista_tokens[i]}")
+            print(f"--------------------------\n")
+
             # --- 1. SIMULAÇÃO (DRY RUN) ---
             # Verificamos se o contrato aceita a operação antes de gastar gás real
             try:
