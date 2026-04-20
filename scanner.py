@@ -294,7 +294,7 @@ class ArbitrageScanner:
                                                               t3_addr)
 
                     # GATILHO DE EXECUÇÃO REAL
-                    if lucro > 0.25 and self.melhor_config:
+                    if lucro > 0.06 and self.melhor_config:
                         print(f"🚀 EXECUTANDO: {rota['nome']} | Lucro Est.: ${lucro:.2f}")
 
 
