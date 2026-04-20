@@ -114,8 +114,8 @@ class ArbitrageScanner:
             t1 = pool_contract.functions.token1().call().lower()
 
             # 2. DEFINIR OS DECIMAIS (Garante que estas linhas existem e não estão comentadas!)
-            d0 = self.get_token_decimals(t0)
-            d1 = self.get_token_decimals(t1)
+            #d0 = self.get_token_decimals(t0)
+            #d1 = self.get_token_decimals(t1)
 
             tokens_na_pool = [t0, t1]
             if token_in.lower() not in tokens_na_pool or token_out.lower() not in tokens_na_pool:
@@ -137,15 +137,28 @@ class ArbitrageScanner:
             else:
                 sqrtPriceX96 = slot0_data
 
-            price_t0_em_t1 = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
+            # 1. Busca os decimais de forma segura
+            d0 = self.get_token_decimals(t0)
+            d1 = self.get_token_decimals(t1)
 
-            # 4. Direção baseada no par real
+            # 2. Preço Teórico (Sem decimais)
+            price_raw = (sqrtPriceX96 / (2 ** 96)) ** 2
+
+            # 3. Preço Real (Ajustado)
+            # Preço de 1 unidade de T0 expressa em T1
+            price_t0_em_t1 = price_raw * (10 ** d0 / 10 ** d1)
+
+            # 4. Lógica de Saída
             if token_in.lower() == t0:
-                direcao_v3 = True  # In: T0 -> Out: T1
+                # Entra T0 -> Sai T1
+                direcao_v3 = True
                 preco_final = price_t0_em_t1
             else:
-                direcao_v3 = False  # In: T1 -> Out: T0
+                # Entra T1 -> Sai T0
+                direcao_v3 = False
                 preco_final = 1 / price_t0_em_t1
+
+            print(f"DEBUG POOL {pool_address}: T0_Dec: {d0}, T1_Dec: {d1}, Price_Raw: {price_raw}")
 
             return preco_final, direcao_v3, fee
 
