@@ -118,16 +118,23 @@ class ArbitrageScanner:
             d0 = self.get_token_decimals(t0)
             d1 = self.get_token_decimals(t1)
 
-            # PREÇO: Quantos T1 recebo por 1 unidade de T0
+            # 1. PREÇO BASE (Unidades de T1 por 1 unidade de T0)
             # Fórmula: (sqrt / 2^96)^2 * (10^d0 / 10^d1)
-            price_t0_em_t1 = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
+            price_base = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
 
+            # 2. LÓGICA DE DIREÇÃO
             if token_in.lower() == t0:
-                # Entra T0 -> Sai T1. O preço já é quanto T1 recebo por T0.
-                return price_t0_em_t1, True, fee
+                # Estou a entrar com T0, vou receber T1
+                # O preço já está em unidades de T1 por T0
+                preco_final = price_base
+                direcao_v3 = True
             else:
-                # Entra T1 -> Sai T0. O preço é o inverso.
-                return 1 / price_t0_em_t1, False, fee
+                # Estou a entrar com T1, vou receber T0
+                # Preciso inverter o preço
+                preco_final = 1 / price_base
+                direcao_v3 = False
+
+            return preco_final, direcao_v3, fee
 
         except Exception as e:
             print(f"❌ Erro no get_quote!")
