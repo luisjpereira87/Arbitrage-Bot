@@ -124,7 +124,7 @@ class ArbitrageScanner:
 
             # 2. Filtros de Liquidez e Saldo (Como já tinhas)
             liquidity = pool_contract.functions.liquidity().call()
-            if liquidity < 10 ** 14: return None
+            if liquidity < 10 ** 12: return None
 
             #print(f"Liquidez da Pool: {liquidity}")
             # 3. Cálculo do Preço (Ajustado para evitar o erro de subscriptable)
@@ -173,11 +173,11 @@ class ArbitrageScanner:
         valor_final = (capital * (q1 * t1) * (q2 * t2) * (q3 * t3)) * margem_seguranca
         lucro_liquido = valor_final - capital - 0.25  # Desconto de $0.25 de Gas
         #if lucro_liquido > -0.10:
-        #print(f"🔥 ALERTA DE LUCRO: ${lucro_liquido:.2f}")
+        print(f"🔥 ALERTA DE LUCRO: ${lucro_liquido:.2f}")
         #print(f"   1. USDC -> ARB @ {q1}")
         #print(f"   2. ARB  -> GMX @ {q2}")
         #print(f"   3. GMX  -> USDC @ {q3}")
-        if lucro_liquido > 0.05:
+        if lucro_liquido > -0.25:
             print(f"DEBUG: Q1: {q1} | Q2: {q2} | Q3: {q3} | Final: {valor_final}")
             print(f"👀 Oportunidade Próxima: ${lucro_liquido:.4f} | Rota: {q1:.6f}->{q2:.2f}->{q3:.4f}")
         return lucro_liquido
@@ -223,7 +223,7 @@ class ArbitrageScanner:
                         q3, d3, f3 = res3
 
                         # 2. Calcula o lucro (baseado em $100 de capital)
-                        lucro = self.calcular_triangular(q1, f1, q2, f2, q3, f3, 5.0)
+                        lucro = self.calcular_triangular(q1, f1, q2, f2, q3, f3, 30.0)
 
                         if lucro > melhor_lucro:
                             melhor_lucro = lucro
@@ -233,7 +233,8 @@ class ArbitrageScanner:
                             # Se este for o melhor lucro até agora, salvamos as direções
                             self.melhor_config = {
                                 "pools": [addr1, addr2, addr3],
-                                "direcoes": [d1, d2, d3]
+                                "direcoes": [d1, d2, d3],
+                                "tokens": [t1_addr, t2_addr, t3_addr]
                             }
                     else:
                         # Isto vai dizer-te qual falhou
@@ -294,14 +295,15 @@ class ArbitrageScanner:
                                                               t3_addr)
 
                     # GATILHO DE EXECUÇÃO REAL
-                    if lucro > 0.06 and self.melhor_config:
+                    if lucro > 0.15 and self.melhor_config:
                         print(f"🚀 EXECUTANDO: {rota['nome']} | Lucro Est.: ${lucro:.2f}")
 
 
                         tx_hash = self.wallet.executar_arbitragem(
                             self.melhor_config["pools"],
                             self.melhor_config["direcoes"],
-                            5.0
+                            self.melhor_config["tokens"],
+                            30.0
                         )
 
                         if tx_hash:

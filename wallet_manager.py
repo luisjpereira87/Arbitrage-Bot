@@ -98,54 +98,66 @@ class WalletManager:
         print("✅ Contrato já tem permissão suficiente.")
         return True
 
-    def executar_arbitragem(self, lista_pools, lista_direcoes, amount_in_usd):
+    def executar_arbitragem(self, lista_pools, lista_direcoes, lista_tokens, amount_in_usd):
+        """
+        Executa a arbitragem de forma atómica.
+        lista_tokens deve ser enviada pelo Scanner: [TokenIn_1, TokenIn_2, TokenIn_3]
+        Exemplo: [USDC, WETH, ARB]
+        """
         try:
-
+            # 1. Conversão para Wei (USDC = 6 decimais)
             val_in_wei = int(amount_in_usd * 10 ** 6)
+
+            # 2. Garantir endereços em Checksum (Evita erros de comparação no contrato)
+            lista_pools_checksum = [self.w3.to_checksum_address(p) for p in lista_pools]
+            lista_tokens_checksum = [self.w3.to_checksum_address(t) for t in lista_tokens]
+
             # --- 1. SIMULAÇÃO (DRY RUN) ---
-            # Isto testa se o contrato vai dar "Revert" (prejuízo ou erro) antes de gastar gás.
+            # Verificamos se o contrato aceita a operação antes de gastar gás real
             try:
                 self.executor_contract.functions.startArbitrage(
-                    lista_pools,
+                    lista_pools_checksum,
                     lista_direcoes,
+                    lista_tokens_checksum,
                     val_in_wei
                 ).call({'from': self.account.address})
-                print("✅ Simulação passou: Lucro real detectado pelo contrato!")
+                print("✅ Simulação passou: Lucro real confirmado na Blockchain!")
             except Exception as sim_error:
-                # Se a simulação falhar, nem perdemos tempo com o resto
-                print(f"⚠️ Abortado: Simulação falhou (Prejuízo ou Erro): {sim_error}")
+                # Aqui é onde o 'IIA' ou 'Arbitragem sem lucro' será capturado
+                print(f"⚠️ Abortado: Simulação falhou (Reverter): {sim_error}")
                 return None
 
-            print(f"DEBUG ENTRADA: {val_in_wei} unidades (wei/min units)")
+            # --- 2. PREPARAÇÃO DA TRANSACÇÃO REAL ---
             nonce = self.w3.eth.get_transaction_count(self.account.address)
 
-            # --- CÁLCULO DE TAXAS DINÂMICO E ROBUSTO ---
+            # Cálculo de Gas para Arbitrum (EIP-1559)
             latest_block = self.w3.eth.get_block('latest')
-            base_fee = latest_block['baseFeePerGas']
+            base_fee = latest_block.get('baseFeePerGas', self.w3.to_wei('0.1', 'gwei'))
 
-            # Na Arbitrum, aumentar a base_fee em 35% garante que a TX entra no próximo bloco
-            # sem quase nenhum custo extra real (são frações de cêntimo).
+            # Margem de 35% na base fee para garantir inclusão rápida
             max_fee = int(base_fee * 1.35)
-            priority_fee = self.w3.to_wei('0.1', 'gwei')
+            priority_fee = self.w3.to_wei('0.01', 'gwei')  # Arbitrum usa priority fees muito baixas
 
             tx = self.executor_contract.functions.startArbitrage(
-                lista_pools,
+                lista_pools_checksum,
                 lista_direcoes,
+                lista_tokens_checksum,
                 val_in_wei
             ).build_transaction({
                 'from': self.account.address,
                 'nonce': nonce,
-                'gas': 1000000,
+                'gas': 800000,
                 'maxFeePerGas': max_fee + priority_fee,
                 'maxPriorityFeePerGas': priority_fee,
                 'chainId': 42161
             })
 
+            # --- 3. ASSINATURA E ENVIO ---
             signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
             tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
 
             return self.w3.to_hex(tx_hash)
 
         except Exception as e:
-            print(f"❌ Erro na execução do contrato: {e}")
+            print(f"❌ Erro crítico na execução: {e}")
             return None

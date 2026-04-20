@@ -30,6 +30,11 @@
         "type": "bool[]"
       },
       {
+        "internalType": "address[]",
+        "name": "tokens",
+        "type": "address[]"
+      },
+      {
         "internalType": "uint256",
         "name": "amountIn",
         "type": "uint256"
