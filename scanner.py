@@ -124,9 +124,9 @@ class ArbitrageScanner:
 
             # 2. Filtros de Liquidez e Saldo (Como já tinhas)
             liquidity = pool_contract.functions.liquidity().call()
-            if liquidity < 10 ** 10: return None
+            if liquidity < 10 ** 14: return None
 
-            print(f"Liquidez da Pool: {liquidity}")
+            #print(f"Liquidez da Pool: {liquidity}")
             # 3. Cálculo do Preço (Ajustado para evitar o erro de subscriptable)
             slot0_data = pool_contract.functions.slot0().call()
 
@@ -177,7 +177,7 @@ class ArbitrageScanner:
         #print(f"   1. USDC -> ARB @ {q1}")
         #print(f"   2. ARB  -> GMX @ {q2}")
         #print(f"   3. GMX  -> USDC @ {q3}")
-        if lucro_liquido > -0.50:
+        if lucro_liquido > 0.05:
             print(f"DEBUG: Q1: {q1} | Q2: {q2} | Q3: {q3} | Final: {valor_final}")
             print(f"👀 Oportunidade Próxima: ${lucro_liquido:.4f} | Rota: {q1:.6f}->{q2:.2f}->{q3:.4f}")
         return lucro_liquido
