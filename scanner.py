@@ -113,10 +113,6 @@ class ArbitrageScanner:
             t0 = pool_contract.functions.token0().call().lower()
             t1 = pool_contract.functions.token1().call().lower()
 
-            # 2. DEFINIR OS DECIMAIS (Garante que estas linhas existem e não estão comentadas!)
-            #d0 = self.get_token_decimals(t0)
-            #d1 = self.get_token_decimals(t1)
-
             tokens_na_pool = [t0, t1]
             if token_in.lower() not in tokens_na_pool or token_out.lower() not in tokens_na_pool:
                 # Se um dos tokens não pertence à pool, o swap é impossível.
@@ -137,28 +133,19 @@ class ArbitrageScanner:
             else:
                 sqrtPriceX96 = slot0_data
 
-            # 1. Busca os decimais de forma segura
+            # No get_quote, após pegar o sqrtPriceX96...
             d0 = self.get_token_decimals(t0)
             d1 = self.get_token_decimals(t1)
 
-            # 2. Preço Teórico (Sem decimais)
-            price_raw = (sqrtPriceX96 / (2 ** 96)) ** 2
-
-            # 3. Preço Real (Ajustado)
             # Preço de 1 unidade de T0 expressa em T1
-            price_t0_em_t1 = price_raw * (10 ** d0 / 10 ** d1)
+            preco_t0_em_t1 = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
 
-            # 4. Lógica de Saída
             if token_in.lower() == t0:
-                # Entra T0 -> Sai T1
                 direcao_v3 = True
-                preco_final = price_t0_em_t1
+                preco_final = preco_t0_em_t1
             else:
-                # Entra T1 -> Sai T0
                 direcao_v3 = False
-                preco_final = 1 / price_t0_em_t1
-
-            #print(f"DEBUG POOL {pool_address}: T0_Dec: {d0}, T1_Dec: {d1}, Price_Raw: {price_raw}")
+                preco_final = 1 / preco_t0_em_t1
 
             return preco_final, direcao_v3, fee
 
@@ -306,7 +293,12 @@ class ArbitrageScanner:
         return rotas_configuradas
 
     def get_token_decimals(self, token_address):
-        return self.decimal_map.get(token_address.lower(), 18)
+        addr = token_address.lower()
+        if addr not in self.decimal_map:
+            # Se não está no mapa, o bot está a voar às cegas!
+            print(f"🚨 ALERTA: Token {addr} DESCONHECIDO! Usando 18 por segurança, mas o preço pode estar errado.")
+            return 18
+        return self.decimal_map[addr]
 
     def run_triangular(self):
         rotas = self.setup_triangulo()
