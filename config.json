@@ -8,9 +8,11 @@
     "GMX": {"addr": "0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a","dec": 18},
     "PENDLE": {"addr": "0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8","dec": 18},
     "RDNT": {"addr": "0x3082CC23568eA640225c2467653dB90e9250AaA0","dec": 18},
-    "PEPE": {"addr": "0x25d887Ce7a35172C62FeBFD67a1856F20FaEbB00","dec": 18}
+    "PEPE": {"addr": "0x25d887Ce7a35172C62FeBFD67a1856F20FaEbB00","dec": 18},
+    "MAGIC": {"addr": "0x539bdE0d7Dbd336b79148AA742883198BBF60342","dec": 18},
+    "LIDO": {"addr": "0x13Ad51ed4F1B7e9Dc168d8a00cB3f4dDD85EfA60","dec": 18}
   },
-  "fees": [100, 500, 3000, 10000],
+  "fees": [100, 500, 3000],
   "triangulos": [
     ["USDC", "WETH", "ARB"],
     ["USDC", "WETH", "LINK"],
@@ -19,10 +21,12 @@
     ["USDC", "ARB", "GMX"],
     ["USDC", "WETH", "PENDLE"],
     ["USDC", "ARB", "RDNT"],
-    ["WETH", "ARB", "LINK"],
-    ["WETH", "WBTC", "ARB"],
     ["USDC", "WETH", "PEPE"],
     ["USDC", "ARB", "PEPE"],
-    ["WETH", "ARB", "PEPE"]
+    ["USDC", "WETH", "MAGIC"],
+    ["USDC", "WETH", "LIDO"],
+    ["USDC", "ARB", "PENDLE"],
+    ["USDC", "GMX", "WETH"],
+    ["USDC", "RDNT", "ARB"]
   ]
 }

@@ -1,11 +1,13 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 from web3 import Web3
 
 from pool_finder import PoolFinder
 from wallet_manager import WalletManager
+from web3_manager import Web3Manager
 
 # --- CONFIGURAÇÃO INICIAL ---
 # Usa os teus endereços mascarados aqui
@@ -17,13 +19,16 @@ WBTC = "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"
 
 
 class ArbitrageScanner:
-    def __init__(self, rpc_url, wallet_private_key, config_file):
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        self.finder = PoolFinder(self.w3)  # A classe que criámos
+    def __init__(self, rpc_url, wallet_private_key, config_file, capital_amount=100):
+
+        self.web3_manager = Web3Manager()
+        #self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self.finder = PoolFinder(self.web3_manager)  # A classe que criámos
         self.config_file = config_file
         self.decimal_map = {info["addr"].lower(): info["dec"] for info in self.config_file["tokens"].values()}
 
-        self.wallet = WalletManager(self.w3)
+        self.wallet = WalletManager(self.web3_manager)
+        self.capital_amount  = capital_amount
 
         # ABI mínima para ler o preço (slot0)
         self.pool_abi = [
@@ -70,36 +75,12 @@ class ArbitrageScanner:
                       "outputs": [{"name": "balance", "type": "uint256"}], "stateMutability": "view",
                       "type": "function"}]
 
-    def get_price(self, pool_address, token_base, token_cotacao):
-        try:
-            pool_address = self.w3.to_checksum_address(pool_address)
-            contract = self.w3.eth.contract(address=pool_address, abi=self.pool_abi)
+        self.name_map = {info["addr"].lower(): nome for nome, info in self.config_file["tokens"].items()}
 
-            slot0_data = contract.functions.slot0().call()
-            sqrtPriceX96 = slot0_data[0] if isinstance(slot0_data, (list, tuple)) else slot0_data
-
-            t0 = contract.functions.token0().call().lower()
-            t1 = contract.functions.token1().call().lower()
-
-            # 1. Identificar decimais (USDC=6, resto=18)
-            d0 = 6 if t0 == USDC.lower() else 18
-            d1 = 6 if t1 == USDC.lower() else 18
-
-            # 2. Cálculo do Preço Real de Token1 em relação a Token0
-            # Preço = (sqrtPriceX96 / 2^96)^2 * (10^d0 / 10^d1)
-            price_t1_em_t0 = ((sqrtPriceX96 / (2 ** 96)) ** 2) * (10 ** d0 / 10 ** d1)
-
-            # 3. Lógica de Retorno
-            if token_base.lower() == t1:
-                # Tu queres o preço do Token1 (ex: ARB) expresso em Token0 (ex: WETH)
-                return price_t1_em_t0
-            else:
-                # Tu queres o preço do Token0 (ex: WETH) expresso em Token1 (ex: USDC)
-                # Invertemos o rácio
-                return 1 / price_t1_em_t0
-
-        except Exception as e:
-            return None
+    @property
+    def w3(self):
+        """Retorna o Web3 atualizado do manager sempre que o bot precisar dele"""
+        return self.web3_manager.w3
 
     def get_quote(self, pool_address, token_in, token_out):
         try:
@@ -107,6 +88,8 @@ class ArbitrageScanner:
                 address=self.w3.to_checksum_address(pool_address),
                 abi=self.pool_abi
             )
+
+            liquidez = pool_contract.functions.liquidity().call()
 
             t0 = pool_contract.functions.token0().call().lower()
             t1 = pool_contract.functions.token1().call().lower()
@@ -134,9 +117,23 @@ class ArbitrageScanner:
                 preco_final = 1 / price_base
                 direcao_v3 = False
 
+            if preco_final > 10 ** 15:
+                return None
+
+            if liquidez < 10 ** 15:
+                return None
+
+            if preco_final <= 0 or preco_final > 10 ** 12:  # Ninguém quer tokens que valham triliões
+                return None
+
             return preco_final, direcao_v3, fee
 
         except Exception as e:
+            if "429" in str(e) or "limit" in str(e).lower():
+                self.web3_manager.rotate_rpc()
+                # Opcional: tenta novamente uma vez após rodar
+                return self.get_quote(pool_address, token_in, token_out)
+
             print(f"❌ Erro no get_quote!")
             print(f"   Pool: {pool_address}")
             print(f"   Token In: {token_in} (Tipo: {type(token_in)})")
@@ -144,7 +141,9 @@ class ArbitrageScanner:
             print(f"   Mensagem: {e}")
             return None
 
-    def calcular_triangular(self, q1, f1, q2, f2, q3, f3, capital=100.0):
+    def calcular_triangular(self, q1, d1, f1, q2, d2, f2, q3, d3, f3, tokens, info_pools):
+
+
         """
         q1: USDC -> WETH
         q2: WETH -> ARB
@@ -157,8 +156,8 @@ class ArbitrageScanner:
 
         margem_seguranca = 0.995
 
-        valor_final = (capital * (q1 * t1) * (q2 * t2) * (q3 * t3)) * margem_seguranca
-        lucro_liquido = valor_final - capital - 0.25  # Desconto de $0.25 de Gas
+        valor_final = (self.capital_amount * (q1 * t1) * (q2 * t2) * (q3 * t3)) * margem_seguranca
+        lucro_liquido = valor_final - self.capital_amount - 0.25  # Desconto de $0.25 de Gas
         #if lucro_liquido > -0.10:
         #print(f"🔥 ALERTA DE LUCRO: ${lucro_liquido:.2f}")
         #print(f"   1. USDC -> ARB @ {q1}")
@@ -166,21 +165,32 @@ class ArbitrageScanner:
         #print(f"   3. GMX  -> USDC @ {q3}")
 
         # Passo a passo da montanha-russa de preços
-        passo1 = capital * (q1 * t1)  # USDC -> Token A
+        passo1 = self.capital_amount * (q1 * t1)  # USDC -> Token A
         passo2 = passo1 * (q2 * t2)  # Token A -> Token B
         passo3 = passo2 * (q3 * t3)  # Token B -> USDC final
 
-        if lucro_liquido > 1.0:
-            print(f"\n--- 🧪 ANÁLISE DE ESCALA ---")
-            print(f"Entrada: ${capital:.2f} USDC")
-            print(f"Passo 1: {passo1:.6f} (Recebido de T2)")
-            print(f"Passo 2: {passo2:.6f} (Recebido de T3)")
-            print(f"Passo 3: {passo3:.6f} (USDC de volta)")
-            print(f"---------------------------\n")
+        if lucro_liquido > -2:  # Só mostra se houver lucro interessante
+            nomes = [self.name_map.get(addr.lower(), addr[:6]) for addr in tokens]
 
-        if lucro_liquido > -0.25:
-            print(f"DEBUG: Q1: {q1} | Q2: {q2} | Q3: {q3} | Final: {valor_final}")
-            print(f"👀 Oportunidade Próxima: ${lucro_liquido:.4f} | Rota: {q1:.6f}->{q2:.2f}->{q3:.4f}")
+            print(f"\n--- 🛰️ ROTA DETETADA: {' -> '.join(nomes)} -> {nomes[0]} ---")
+
+            precos = [q1, q2, q3]
+
+            for i, pool in enumerate(info_pools):
+                t_in = nomes[i]
+                t_out = nomes[(i + 1) % 3]
+                # Mostra: Passo [DEX]: TokenIn -> TokenOut @ Preço | Pool: 0x...
+                print(f"  📍 Passo {i + 1} [{pool['dex']}]: {t_in} -> {t_out} @ {precos[i]:.8f} | Pool: {pool['addr']}")
+
+            print(f"💰 Investimento: ${self.capital_amount:.2f} {nomes[0]}")
+            print(f"➡️ Resultado Passo 1: {passo1:.6f} {nomes[1]}")
+            print(f"➡️ Resultado Passo 2: {passo2:.6f} {nomes[2]}")
+            print(f"⬅️ Resultado Passo 3: {passo3:.6f} {nomes[0]} (Final)")
+
+            status = "✅ LUCRO" if lucro_liquido > 0 else "❌ PREJUÍZO"
+            print(f"📊 Resultado: {status} de ${lucro_liquido:.4f}")
+            print(f"--------------------------------------------------\n")
+
         return lucro_liquido
 
     def log_sucesso_triangular(self, lucro, detalhes=""):
@@ -219,12 +229,19 @@ class ArbitrageScanner:
 
                     #print("AQUIII")
                     if res1 and res2 and res3:
+                        info_pools = [
+                            {"dex": dex1, "addr": addr1},
+                            {"dex": dex2, "addr": addr2},
+                            {"dex": dex3, "addr": addr3}
+                        ]
+
+
                         q1, d1, f1 = res1  # Preço e Direção (bool)
                         q2, d2, f2 = res2
                         q3, d3, f3 = res3
 
                         # 2. Calcula o lucro (baseado em $100 de capital)
-                        lucro = self.calcular_triangular(q1, f1, q2, f2, q3, f3, 30.0)
+                        lucro = self.calcular_triangular(q1, d1, f1, q2, d2, f2, q3, d3, f3, [t1_addr, t2_addr, t3_addr], info_pools)
 
                         if lucro > melhor_lucro:
                             melhor_lucro = lucro
@@ -252,31 +269,47 @@ class ArbitrageScanner:
         self.fees = self.config_file["fees"]
         rotas_configuradas = []
 
-        print(f"⚙️ Configurando {len(self.config_file['triangulos'])} triângulos em {len(self.fees)} faixas de taxa...")
-
         for tri in self.config_file["triangulos"]:
             t1, t2, t3 = tri
             addr1, addr2, addr3 = self.tokens[t1]["addr"], self.tokens[t2]["addr"], self.tokens[t3]["addr"]
 
-            print(f"🔍 Mapeando: {t1} -> {t2} -> {t3}")
-
-            # Estrutura para armazenar as pools de cada perna do triângulo
-            pool_data = {
+            # 1. ROTA NORMAL (t1 -> t2 -> t3)
+            pool_normal = {
                 "nome": f"{t1}-{t2}-{t3}",
                 "tokens": [addr1, addr2, addr3],
                 "p1": {}, "p2": {}, "p3": {}
             }
 
+            # 2. ROTA INVERSA (t1 -> t3 -> t2)
+            pool_inversa = {
+                "nome": f"{t1}-{t3}-{t2} (INV)",
+                "tokens": [addr1, addr3, addr2],
+                "p1": {}, "p2": {}, "p3": {}
+            }
+
             for f in self.fees:
-                # P1: Token1 -> Token2
-                pool_data["p1"].update(self.finder.get_pools(addr1, addr2, f))
-                # P2: Token2 -> Token3
-                pool_data["p2"].update(self.finder.get_pools(addr2, addr3, f))
-                # P3: Token3 -> Token1
-                pool_data["p3"].update(self.finder.get_pools(addr3, addr1, f))
+                # Obtemos as pools dos pares
+                p1_pools = self.finder.get_pools(addr1, addr2, f)  # USDC-WETH
+                p2_pools = self.finder.get_pools(addr2, addr3, f)  # WETH-ARB
+                p3_pools = self.finder.get_pools(addr3, addr1, f)  # ARB-USDC
 
-            rotas_configuradas.append(pool_data)
+                # Preenche Normal (USDC -> WETH -> ARB -> USDC)
+                pool_normal["p1"].update(p1_pools)
+                pool_normal["p2"].update(p2_pools)
+                pool_normal["p3"].update(p3_pools)
 
+                # Preenche Inversa (USDC -> ARB -> WETH -> USDC)
+                # O Passo 1 da inversa é a conexão USDC-ARB (p3_pools)
+                pool_inversa["p1"].update(p3_pools)
+                # O Passo 2 da inversa é a conexão ARB-WETH (p2_pools)
+                pool_inversa["p2"].update(p2_pools)
+                # O Passo 3 da inversa é a conexão WETH-USDC (p1_pools)
+                pool_inversa["p3"].update(p1_pools)
+
+            rotas_configuradas.append(pool_normal)
+            rotas_configuradas.append(pool_inversa)
+
+        print(f"✅ Mapeadas {len(rotas_configuradas)} rotas (Sentidos Normal e Inverso)")
         return rotas_configuradas
 
     def get_token_decimals(self, token_address):
@@ -287,7 +320,65 @@ class ArbitrageScanner:
 
         return self.decimal_map.get(addr, 18)
 
+    def processar_rota_individual(self, rota):
+        """
+        Esta função contém a lógica que tinhas dentro do 'for rota in rotas'
+        """
+        try:
+            # Extrai os endereços para facilitar a leitura no get_quote
+            t1_addr, t2_addr, t3_addr = rota["tokens"]
+
+            # analisa_rotas agora recebe o dicionário de pools específico daquela rota
+            nome_exec, lucro = self.analisar_rotas(rota["p1"], rota["p2"], rota["p3"], t1_addr, t2_addr,
+                                                   t3_addr)
+
+            # GATILHO DE EXECUÇÃO REAL
+            if lucro > 0.15 and self.melhor_config:
+                print(f"🚀 EXECUTANDO: {rota['nome']} | Lucro Est.: ${lucro:.2f}")
+
+
+                tx_hash = self.wallet.executar_arbitragem(
+                    self.melhor_config["pools"],
+                    self.melhor_config["direcoes"],
+                    self.melhor_config["tokens"],
+                    30.0
+                )
+
+                if tx_hash:
+                    print(f"💰 Transação enviada! Hash: {tx_hash}")
+                    time.sleep(15)  # Espera a rede processar antes de procurar a próxima
+                    self.melhor_config = None  # Limpa para a próxima busca
+
+        except Exception as e:
+            # Se o erro subir até aqui, também tentamos rodar
+            if "429" in str(e) or "limit" in str(e).lower():
+                self.web3_manager.rotate_rpc()
+            else:
+                print(f"⚠️ Erro na rota {rota['nome']}: {e}")
+
+        except Exception as e:
+            # Importante: prints dentro de threads podem ficar misturados,
+            # mas para debug servem.
+            pass
+
+
     def run_triangular(self):
+        rotas = self.setup_triangulo()
+        # Definimos quantos "trabalhadores" (threads) teremos.
+        # 5 a 10 é um bom número para não seres bloqueado pelo RPC (Infura/Alchemy).
+        max_workers = 3
+
+        while True:
+            # O ThreadPoolExecutor gere o paralelismo para nós
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Enviamos todas as rotas para serem analisadas ao mesmo tempo
+                executor.map(self.processar_rota_individual, rotas)
+
+            # Uma pausa mínima apenas para não colapsar o loop infinito
+            time.sleep(0.1)
+
+
+    def run_triangular_old(self):
         rotas = self.setup_triangulo()
 
         while True:
@@ -305,6 +396,7 @@ class ArbitrageScanner:
                         print(f"🚀 EXECUTANDO: {rota['nome']} | Lucro Est.: ${lucro:.2f}")
 
 
+                        """
                         tx_hash = self.wallet.executar_arbitragem(
                             self.melhor_config["pools"],
                             self.melhor_config["direcoes"],
@@ -316,7 +408,7 @@ class ArbitrageScanner:
                             print(f"💰 Transação enviada! Hash: {tx_hash}")
                             time.sleep(15)  # Espera a rede processar antes de procurar a próxima
                             self.melhor_config = None  # Limpa para a próxima busca
-
+                        """
                 except Exception as e:
                     print(f"⚠️ Erro na rota {rota['nome']}: {e}")
 
