@@ -8,7 +8,7 @@ class ArbitrageBase:
         self.web3_manager = web3_manager
         self.config = config
         self.capital = 100  # Default capital in USD
-        self.MIN_LIQUIDITY = 10**17
+        self.MIN_LIQUIDITY = 10 ** 17
 
         self.pool_static_cache = {}
 
@@ -216,5 +216,8 @@ class ArbitrageBase:
             return decoded_prices
 
         except Exception as e:
-            print(f"❌ Erro Multicall: {e}")
+            if "429" in str(e):
+                self.web3_manager.rotate_rpc()
+                return self.get_quotes_batch(pool_addresses)
+            print(f"❌ Erro crítico no envio: {e}")
             return {}
