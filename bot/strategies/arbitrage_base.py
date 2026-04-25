@@ -8,7 +8,7 @@ class ArbitrageBase:
         self.web3_manager = web3_manager
         self.config = config
         self.capital = 100  # Default capital in USD
-        self.MIN_LIQUIDITY = 10 ** 14
+        self.MIN_LIQUIDITY = 10 ** 17
 
         self.pool_static_cache = {}
 
@@ -34,7 +34,7 @@ class ArbitrageBase:
         ]
 
         self.low_liquidity_cache = {}  # {addr: timestamp_da_exclusao}
-        self.LIQUIDITY_TTL = 300  # Ignorar por 1 hora (3600 segundos)
+        self.LIQUIDITY_TTL = 3600  # Ignorar por 1 hora (3600 segundos)
 
     @property
     def w3(self):

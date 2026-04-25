@@ -1,9 +1,5 @@
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-
-from dotenv import load_dotenv
-from web3 import Web3
 
 from bot.dclass.config_json import Config
 from bot.strategies.simple_strategy import SimpleStrategy
@@ -17,24 +13,24 @@ class ArbitrageScanner:
     def __init__(self, config_file: Config, capital_amount: float = 100.0):
 
         self.web3_manager = Web3Manager()
-        #self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        # self.w3 = Web3(Web3.HTTPProvider(rpc_url))
         self.finder = PoolFinder(self.web3_manager)  # A classe que criámos
         self.config_file = config_file
         self.decimal_map = {info["addr"].lower(): info["dec"] for info in self.config_file["tokens"].values()}
 
         self.wallet = WalletManager(self.web3_manager)
-        self.capital_amount  = capital_amount
+        self.capital_amount = capital_amount
 
-        self.simple_engine = SimpleStrategy(self.web3_manager, self.config_file, self.finder,  self.wallet, self.capital_amount)
-        self.triangular_engine = TriangularStrategy(self.web3_manager, self.config_file, self.finder,  self.wallet, self.capital_amount)
+        self.simple_engine = SimpleStrategy(self.web3_manager, self.config_file, self.finder, self.wallet,
+                                            self.capital_amount)
+        self.triangular_engine = TriangularStrategy(self.web3_manager, self.config_file, self.finder, self.wallet,
+                                                    self.capital_amount)
 
         self.active_simple_pairs = [
             ["USDC", "WETH"],
             ["WETH", "WBTC"],
             ["USDC", "ARB"]
         ]
-
-
 
     @property
     def w3(self):
@@ -108,13 +104,23 @@ class ArbitrageScanner:
             # Contamos quantas pools estão ativas em todas as estratégias
             # apenas para monitorização
 
-            static_count = len(self.simple_engine.pool_static_cache) if self.simple_engine.pool_static_cache else 0
-            low_liq_count = len(self.simple_engine.low_liquidity_cache) if self.simple_engine.low_liquidity_cache else 0
+            static_count_simple = len(
+                self.simple_engine.pool_static_cache) if self.simple_engine.pool_static_cache else 0
+            low_liq_count_simple = len(
+                self.simple_engine.low_liquidity_cache) if self.simple_engine.low_liquidity_cache else 0
 
-            alive_pools = static_count - low_liq_count
+            alive_pools_simple = static_count_simple - low_liq_count_simple
+
+            static_count_triangular = len(
+                self.triangular_engine.pool_static_cache) if self.triangular_engine.pool_static_cache else 0
+            low_liq_count_triangular = len(
+                self.triangular_engine.low_liquidity_cache) if self.triangular_engine.low_liquidity_cache else 0
+
+            alive_pools_triangular = static_count_triangular - low_liq_count_triangular
 
             print(f"💓 [HEARTBEAT] {time.strftime('%H:%M:%S')} | "
-                  f"Pools Ativas: {alive_pools} | "
+                  f"Pools Ativas Triangular: {alive_pools_triangular} | "
+                  f"Pools Ativas Simple: {alive_pools_simple} | "
                   f"Status: À procura de oportunidades...")
 
             return current_time
