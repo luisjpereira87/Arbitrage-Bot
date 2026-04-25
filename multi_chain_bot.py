@@ -1,9 +1,6 @@
 import time
 
 from ccxt import hyperliquid
-from eth_abi import decode
-from lazy_object_proxy.utils import await_
-from web3 import Web3
 
 from pool_finder import PoolFinder
 from web3_manager import Web3Manager
