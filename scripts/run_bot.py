@@ -4,7 +4,6 @@ import os
 
 from dotenv import load_dotenv
 
-from multi_chain_bot import MultiChainBot
 from scanner import ArbitrageScanner
 from wallet_manager import WalletManager
 from web3_manager import Web3Manager
@@ -17,7 +16,7 @@ RPC_URL = os.getenv("RPC_URL")
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")
 
 def load_config():
-    with open("config.json", "r") as f:
+    with open("./config.json", "r") as f:
         return json.load(f)
 """
 def load_abi():
@@ -25,22 +24,12 @@ def load_abi():
         return json.load(f)
 """
 
-if __name__ == '__main__':
+def main():
     config = load_config()
-    #abi = load_abi()
+    # abi = load_abi()
 
     # --- EXECUÇÃO ---
-    scanner = ArbitrageScanner(config)
-    #scanner.run_triangular()
+    scanner = ArbitrageScanner(config, 200)
+    # scanner.run_triangular()
 
     scanner.run_parallel()
-
-    #multi_chain_bot = MultiChainBot()
-    #multi_chain_bot.run()
-
-    #t = WalletManager( Web3Manager())
-    #t.check_and_approve_executor(100.0)
-
-
-    #t.forcar_execucao_teste()
-

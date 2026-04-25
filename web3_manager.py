@@ -18,9 +18,14 @@ class Web3Manager:
             RPC_INFURA_ARBITRUM_URL
         ]
         self.current_index = 0
-        self.w3 = Web3(Web3.HTTPProvider(self.rpcs[self.current_index]))
+        self.w3 = Web3(Web3.HTTPProvider(self.rpcs[self.current_index], request_kwargs={'timeout': 120}))
+        self.allow_rotation = True
 
     def rotate_rpc(self):
+        if not self.allow_rotation:
+            print("🔒 Rotação bloqueada. Mantendo RPC atual.")
+            return self.w3  # Retorna o atual sem mudar
+
         self.current_index = (self.current_index + 1) % len(self.rpcs)
         print(f"🔄 Mudando para RPC: {self.rpcs[self.current_index]}")
         self.w3 = Web3(Web3.HTTPProvider(self.rpcs[self.current_index]))

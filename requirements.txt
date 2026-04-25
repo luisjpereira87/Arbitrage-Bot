@@ -1,3 +1,5 @@
 web3
 eth-account
 python-dotenv
+eth-brownie
+ccxt

@@ -1,0 +1,6 @@
+compiler:
+  solc:
+    version: null  # Isto obriga o Brownie a procurar o solc instalado no sistema
+    optimizer:
+      enabled: true
+      runs: 200

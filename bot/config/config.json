@@ -12,11 +12,7 @@
     "MAGIC": {"addr": "0x539bdE0d7Dbd336b79148AA742883198BBF60342","dec": 18},
     "LIDO": {"addr": "0x13Ad51ed4F1B7e9Dc168d8a00cB3f4dDD85EfA60","dec": 18},
     "USDT": {"addr": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", "dec": 6},
-    "WSTETH": {"addr": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", "dec": 6},
-    "UNI": {"addr": "0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0", "dec": 18},
-    "AAVE": {"addr": "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196", "dec": 18},
-    "CRV": {"addr": "0x11cDb42B0EB46D95f990BeDD4695A6e3fA034978", "dec": 18},
-    "COMP": {"addr": "0x354A6dA3fcde098F8389cad84b0182725c6C91dE", "dec": 18}
+    "WSTETH": {"addr": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", "dec": 6}
   },
   "fees": [100, 500, 3000],
   "triangles": [
@@ -36,18 +32,11 @@
     ["USDT", "WETH", "USDC"],
     ["USDC", "ARB", "USDT"],
     ["USDT", "GMX", "USDC"],
-    ["USDC", "LINK", "USDT"],
-    ["USDC", "WETH", "UNI"],
-    ["USDC", "AAVE", "WETH"],
-    ["USDC", "WETH", "CRV"],
-    ["USDC", "WETH", "COMP"],
-    ["USDT", "UNI", "USDC"]
+    ["USDC", "LINK", "USDT"]
   ],
   "simple_pairs":  [
     ["USDC", "WETH"],
-    ["USDC", "ARB"],
-    ["USDC", "UNI"],
-    ["USDC", "AAVE"],
-    ["WETH", "CRV"]
+    ["WETH", "WBTC"],
+    ["USDC", "ARB"]
   ]
 }
