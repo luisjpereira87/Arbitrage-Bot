@@ -1,20 +1,12 @@
-import json
-import math
-import os
-import time
+
 
 from dotenv import load_dotenv
-from eth_abi import encode
+
 from web3 import Web3
 load_dotenv()
 
 import os
 import json
-
-w3 = Web3(Web3.HTTPProvider(
-    'http://127.0.0.1:8545',
-    request_kwargs={'timeout': 120}  # Isto dá 2 minutos de "paciência" ao Python
-))
 
 
 class WalletManager:
@@ -203,35 +195,6 @@ class WalletManager:
                 return self.executar_arbitragem(lista_pools, lista_direcoes, lista_tokens, amount_in_usd)
             print(f"❌ Erro crítico no envio: {e}")
             return None
-
-    def forcar_execucao_teste(self):
-
-        # Dados da rota do teu log (LINK)
-        pools = [
-            self.w3.to_checksum_address("0xC473e2aEE3441BF9240Be85eb122aBB059A3B57c"),
-            self.w3.to_checksum_address("0x92c63d0e701CAAe670C9415d91C474F686298f00"),
-            self.w3.to_checksum_address("0xaEBDcA1Bc8d89177EbE2308d62af5e74885DcCc3")
-        ]
-
-        # Direções (True se tokenIn < tokenOut no endereço, depende da pool)
-        # Podes extrair estas do teu log ou colocar as que o bot calculou
-        direcoes = [True, True, False]
-
-        tokens = [
-            self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),  # USDC
-            self.w3.to_checksum_address("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"),  # WETH
-            self.w3.to_checksum_address("0xf97f4df75117a78c1A5a0DBb814Af92458539FB4")  # LINK
-        ]
-
-        print("🛠️ Iniciando transação de teste real...")
-        # Usamos um valor pequeno, ex: 10 USDC para o teste
-
-        tx_hash = self.executar_arbitragem(pools, direcoes, tokens, 0.05)
-
-        if tx_hash:
-            print(f"🚀 SUCESSO! Transação enviada: https://arbiscan.io/tx/{tx_hash}")
-        else:
-            print("❌ A transação falhou antes de ser enviada.")
 
     def _is_fork(self):
         try:
