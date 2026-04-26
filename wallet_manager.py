@@ -1,8 +1,5 @@
-
-
 from dotenv import load_dotenv
 
-from web3 import Web3
 load_dotenv()
 
 import os
@@ -35,7 +32,7 @@ class WalletManager:
 
         self._current_nonce = None
 
-        #self.executor_address = self.w3.to_checksum_address(os.getenv("CONTRACT_ADDRESS"))
+        # self.executor_address = self.w3.to_checksum_address(os.getenv("CONTRACT_ADDRESS"))
         self.usdc_address = self.w3.to_checksum_address("0xaf88d065e77c8cC2239327C5EDb3A432268e5831")
 
         # 3. Carregar ABI do Contrato
@@ -103,7 +100,7 @@ class WalletManager:
                 return True
             return True
         except Exception as e:
-            if "429" in str(e):
+            if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.web3_manager.rotate_rpc()
                 return self.check_and_approve_executor(amount_usd)  # Tenta de novo com novo RPC
             print(f"❌ Erro no Approve: {e}")
@@ -162,7 +159,7 @@ class WalletManager:
             real_nonce = self.w3.eth.get_transaction_count(self.account.address)
 
             # Se o nosso contador interno for menor que o real, corrigimos
-            if self._current_nonce is None or  self._current_nonce < real_nonce:
+            if self._current_nonce is None or self._current_nonce < real_nonce:
                 self._current_nonce = real_nonce
 
             tx = self.executor_contract.functions.startArbitrage(
@@ -190,7 +187,7 @@ class WalletManager:
                 self._current_nonce = self.w3.eth.get_transaction_count(self.account.address)
                 print(f"🔄 Erro de sincronização. Novo Nonce base: {self._current_nonce}")
 
-            if "429" in str(e):
+            if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.web3_manager.rotate_rpc()
                 return self.executar_arbitragem(lista_pools, lista_direcoes, lista_tokens, amount_in_usd)
             print(f"❌ Erro crítico no envio: {e}")
@@ -209,7 +206,7 @@ class WalletManager:
 
     def _bootstrap_fork_env(self):
         # Importa aqui dentro para manter o contexto do Brownie isolado
-        from brownie import accounts, network, web3, Contract
+        from brownie import accounts, web3, Contract
 
         temp_file = "deployed_address_fork.txt"
 

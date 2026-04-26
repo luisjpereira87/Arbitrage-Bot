@@ -6,8 +6,8 @@ class PoolFinder:
             "UNI_V3": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
             "SUSHI_V3": "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e",
             "PAN_V3": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
-            #"CAMELOT_V3": "0x1a3c9B1d2F0529D97f2afC5136Cc23e58f1FD35B",
-            #"CAMELOT_V4": "0xBefC4b405041c5833f53412fF997ed2f697a2f37"
+            # "CAMELOT_V3": "0x1a3c9B1d2F0529D97f2afC5136Cc23e58f1FD35B",
+            # "CAMELOT_V4": "0xBefC4b405041c5833f53412fF997ed2f697a2f37"
         }
 
         self.abi = [
@@ -196,7 +196,7 @@ class PoolFinder:
                     continue
 
             except Exception as e:
-                if "429" in str(e):
+                if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                     self.web3_manager.rotate_rpc()
                 print(f"⚠️ {name} Erro: {e}")
 

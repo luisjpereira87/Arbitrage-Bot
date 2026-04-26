@@ -216,7 +216,7 @@ class ArbitrageBase:
             return decoded_prices
 
         except Exception as e:
-            if "429" in str(e):
+            if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.web3_manager.rotate_rpc()
                 return self.get_quotes_batch(pool_addresses)
             print(f"❌ Erro crítico no envio: {e}")
