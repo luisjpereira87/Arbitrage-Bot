@@ -100,7 +100,7 @@ class WalletManager:
                 return True
             return True
         except Exception as e:
-            if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+            if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.web3_manager.rotate_rpc()
                 return self.check_and_approve_executor(amount_usd)  # Tenta de novo com novo RPC
             print(f"❌ Erro no Approve: {e}")
@@ -187,7 +187,7 @@ class WalletManager:
                 self._current_nonce = self.w3.eth.get_transaction_count(self.account.address)
                 print(f"🔄 Erro de sincronização. Novo Nonce base: {self._current_nonce}")
 
-            if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+            if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.web3_manager.rotate_rpc()
                 return self.executar_arbitragem(lista_pools, lista_direcoes, lista_tokens, amount_in_usd)
             print(f"❌ Erro crítico no envio: {e}")

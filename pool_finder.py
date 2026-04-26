@@ -196,7 +196,7 @@ class PoolFinder:
                     continue
 
             except Exception as e:
-                if any(x in e for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+                if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                     self.web3_manager.rotate_rpc()
                 print(f"⚠️ {name} Erro: {e}")
 
