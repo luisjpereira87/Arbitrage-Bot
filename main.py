@@ -1,46 +1,38 @@
 # This is a sample Python script.
-import json
-import os
+import asyncio
+import logging
 
-from dotenv import load_dotenv
+from core.bots.multi_chain_bot import MultiChainBot
+from core.config.properties_multi import PropertiesMulti
 
-from multi_chain_bot import MultiChainBot
-from scanner import ArbitrageScanner
-from wallet_manager import WalletManager
-from web3_manager import Web3Manager
-
-load_dotenv()
-
-# Agora podes capturá-las assim:
-PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-RPC_URL = os.getenv("RPC_URL")
-CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")
-
-def load_config():
-    with open("config.json", "r") as f:
-        return json.load(f)
 """
 def load_abi():
     with open("abi.json", "r") as f:
         return json.load(f)
 """
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
 if __name__ == '__main__':
-    config = load_config()
-    #abi = load_abi()
+    properties_multi = PropertiesMulti()
+    # abi = load_abi()
 
     # --- EXECUÇÃO ---
-    scanner = ArbitrageScanner(config)
-    #scanner.run_triangular()
+    # arbitrum_bot = ArbitrumBot(config)
+    # scanner.run_triangular()
 
-    scanner.run_parallel()
+    # arbitrum_bot.run_parallel()
 
-    #multi_chain_bot = MultiChainBot()
-    #multi_chain_bot.run()
+    multi_chain_bot = MultiChainBot(properties_multi)
+    asyncio.run(multi_chain_bot.run())
 
-    #t = WalletManager( Web3Manager())
-    #t.check_and_approve_executor(100.0)
+    # t = WalletManager( Web3Manager())
+    # t.check_and_approve_executor(100.0)
 
-
-    #t.forcar_execucao_teste()
-
+    # t.forcar_execucao_teste()
