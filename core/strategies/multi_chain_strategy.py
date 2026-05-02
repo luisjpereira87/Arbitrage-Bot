@@ -470,6 +470,11 @@ class MultiChainStrategy(ArbitrageBase):
 
         min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
 
+        # LOG de Decisão (Útil para debug no Railway)
+        logging.info(f"--- 🧠 Análise Dinâmica ---")
+        logging.info(f"Lucro: ${net_profit:.4f} (Min Req: ${min_profit_required:.4f})")
+        logging.info(f"Spread: {spread_percent:.2f}% (Min Req: {min_spread_required:.2f}%)")
+
         # 3. Lógica Especial de Saída (Spread Negativo)
         # Se o spread for negativo (DEX mais cara que HL), a arbitragem inverteu totalmente.
         # Isto é um sinal fortíssimo de saída, mesmo que o lucro seja baixo.
