@@ -20,11 +20,11 @@ class MultiChainStrategy(ArbitrageBase):
         super().__init__(web3_manager, properties.CONFIG)
         self.watched_pairs = None
         self.finder = pool_finder
-        self.min_profit = 0.20  # Minimum $ profit to trigger
+        # self.min_profit = 0.20  # Minimum $ profit to trigger
         self.wallet = wallet
         self.capital = capital_amount
         self.config = properties.CONFIG
-        self.min_entry_spread = 2.5
+        # self.min_entry_spread = 2.5
         self.min_usdc_to_trade = 10.0
         self.min_exit_spread = -0.1
         # self.min_amount = 10
@@ -104,6 +104,8 @@ class MultiChainStrategy(ArbitrageBase):
         active_tokens = {sym: units for sym, units in inventory.items()
                          if sym not in ["USDC", "hl"] and units > 0.00001}
 
+        logging.info(f"📊 [ESTADO] DEX: {usdc_dex:.2f} USDC | HL: {hl_equity:.2f} USDC | Tokens: {active_tokens}")
+
         # 3. VERIFICAÇÃO LÓGICA:
         # Se não temos tokens para gerir E o saldo é baixo, então paramos.
         if not active_tokens and usdc_balance < self.min_usdc_to_trade:
@@ -162,54 +164,60 @@ class MultiChainStrategy(ArbitrageBase):
             logging.warning(f"🚫 Spread de {spread_percent}% ignorado por segurança (Threshold 20%)")
             return None
 
-        check_viability, min_profit_required, min_spread_required = self.check_viability_dynamic(profit, spread_percent,
-                                                                                                 usdc_balance, dex_fee)
-        logging.info(f"⚖️ {symbol_b} DEX-{dex_name}: {dex_price:.4f} | HL: {hl_price:.4f} | Net: ${profit:.4f} | "
-                     f"Carteira {symbol_a}: {inventory.get(symbol_a)}, {symbol_b}: {inventory.get(symbol_b)} | "
-                     f"Carteira HL {symbol_a}: {inventory.get('hl')} | "
-                     f"Spread: {spread_percent:.2f}%")
-
         # --- LÓGICA DE EXECUÇÃO / GESTÃO ---
 
         # CENÁRIO A: Já temos este ativo volátil no contrato (Gestão de Posição)
         if symbol_b in active_tokens:
             units = active_tokens[symbol_b]
-            logging.info(f"📦 Gerindo posição ativa: {units} {symbol_b}")
 
             # Busca posição de Short na Hyperliquid
             hl_pos = await self.exchange.get_open_position(hl_pair)
 
             if hl_pos is None:
-                # Caso 1: Temos o token mas NÃO temos o Short
-                if check_viability:
+                # Caso 1: Temos o token mas NÃO temos o Short (Hedge em falta)
+                # Usamos lógica de ENTRADA (is_exit=False) porque vamos abrir uma posição nova na HL
+                check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,
+                                                                     is_exit=False)
+
+                if check_v:
                     logging.info(
                         f"🚀 Spread favorável ({spread_percent:.2f}%)! Abrindo Short na HL para proteger {units} {symbol_b}...")
                     await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, False, pool_addr,
                                                       direction)
-                    # await self.exchange.open_new_position(hl_pair, 1, Signal.SELL, units * hl_price)
                 else:
-                    # NOVA LÓGICA: Aguarda o spread subir para abrir o hedge
                     logging.info(
-                        f"⏳ {symbol_b} em carteira, mas spread ({spread_percent:.2f}%) abaixo do alvo de entrada ({self.min_entry_spread}%). Aguardando...")
-                    return False
+                        f"⏳ {symbol_b} em carteira, mas spread ({spread_percent:.2f}%) insuficiente para hedge. Aguardando...")
+                return False
+
             else:
-                # Caso 2: Temos o token E temos o Short (Posição de Arbitragem Completa)
-                if profit >= min_profit_required or spread_percent <= min_spread_required:
-                    logging.info(
-                        f"💰 Lucro atingido em {symbol_b}! Spread atual: {spread_percent:.2f}%. Fechando ciclo...")
+                # Caso 2: Posição de Arbitragem Completa (Token + Short)
+                # IMPORTANTE: Usamos lógica de SAÍDA (is_exit=True)
+                check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,
+                                                                     is_exit=True)
+                """
+                logging.info(
+                    f"⚖️ Monitorizando {symbol_b}: Net: ${profit:.4f} (Alvo: ${min_p:.4f}) | Spread: {spread_percent:.2f}% (Alvo: {self.min_exit_spread}%)")
+                """
+                if check_v:
+                    logging.info(f"💰 SAÍDA: {symbol_b} | Lucro: ${profit:.4f} | Spread: {spread_percent:.2f}%")
                     await self.execute_exit_sequence(watched_pair, units, pool_addr, direction)
                     return True
                 else:
                     logging.info(
-                        f"💎 Arbitragem {symbol_b} saudável. Spread atual: {spread_percent:.2f}% | Alvo Saída: {self.min_exit_spread}%")
+                        f"💎 ATIVO: {units:.4f} {symbol_b} | Lucro Atual: ${profit:.4f} | Spread: {spread_percent:.2f}% | Alvo: {self.min_exit_spread}%")
                     return False
+
         # CENÁRIO B: Carteira limpa, procurar Novas Entradas
-        # Importante: só entra aqui se NÃO houver nenhum token ativo sendo gerido
-        elif not active_tokens and check_viability:
-            logging.info(
-                f"🎯 Nova oportunidade detectada: {spread_percent:.2f}% em {symbol_b}. Executando entrada!")
-            await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, True, pool_addr, direction)
-            return True
+        elif not active_tokens:
+            # Usamos lógica de ENTRADA (is_exit=False)
+            check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,
+                                                                 is_exit=False)
+
+            if check_v:
+                logging.info(
+                    f"🎯 Nova oportunidade: {spread_percent:.2f}% em {symbol_b} (Lucro Est: ${profit:.4f}). Executando!")
+                await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, True, pool_addr, direction)
+                return True
 
         return False
 
@@ -217,75 +225,63 @@ class MultiChainStrategy(ArbitrageBase):
                                      is_dex_swap: bool, selected_pool: str, direction: bool):
         """
         1. Swap USDC -> Token (DEX)
-        2. Open Short (Hyperliquid) - Ambos usando o valor em USDC
+        2. Open Short (Hyperliquid)
         """
         logging.info(f"🚀 Iniciando entrada em {pair.symbol_b} com {amount_usdc} USDC")
 
         if is_dex_swap:
-
-            # O segredo está aqui:
-            # tokens_list[0] = O que tu TENS no contrato (USDC)
-            # tokens_list[1] = O que tu QUERES receber (WETH/ARB...)
+            # Rota: [USDC, TOKEN_VOLATIL]
             tokens_para_swap = [pair.addr_a, pair.addr_b]
 
             if not pair.pools_map:
-                return
-
-            # selected_pool = list(pair.pools_map.values())[0]  # Pega a primeira pool encontrada
+                logging.error(f"❌ Nenhuma pool configurada para {pair.symbol_b}")
+                return False
 
             # PASSO 1: Swap na DEX
-            # Passamos os dados da Dataclass e o valor float de USDC
+            # Convertemos o capital em float (ex: 15.0) para Wei de USDC (6 decimais)
+            usdc_wei = int(amount_usdc * (10 ** pair.decimal_a))
+
+            logging.info(f"🔄 Executando Swap DEX: {amount_usdc} USDC -> {pair.symbol_b}")
             tx_hash = self.wallet.send_transaction(
-                pools_list=[selected_pool],  # Extrai os endereços das pools do dict
-                dir_list=[direction],  # Usa o booleano pré-calculado
-                tokens_list=tokens_para_swap,  # O token que sai (USDC)
-                amount_usd=amount_usdc  # Valor em float
+                pools_list=[selected_pool],
+                dir_list=[direction],
+                tokens_list=tokens_para_swap,
+                amount_usd=usdc_wei  # Enviamos o valor exato em Wei (int)
             )
 
             if not tx_hash:
-                logging.error("❌ Falha ao enviar transação para a DEX. Abortando.")
+                logging.error("❌ Falha ao enviar transação para a DEX. Abortando entrada.")
                 return False
 
-            # PASSO 2: Hedge na Hyperliquid
-            # Como o teu método já converte USDC -> Units internamente, passamos o valor direto
-            logging.info(f"✅ Transação DEX enviada! Abrindo Short na HL para cobrir ${amount_usdc}...")
+            logging.info(f"✅ Transação DEX enviada! Hash: {tx_hash}")
 
+        # PASSO 2: Hedge na Hyperliquid
+        logging.info(f"📉 Abrindo Short na HL para cobrir ${amount_usdc} em {pair.hl_pair}...")
         hl_success = await self.exchange.open_new_position(
             pair.hl_pair,
-            1.0,  # Alavancagem (Leverage)
-            Signal.SELL,  # Ordem de Short
-            amount_usdc  # O valor em dólares que o teu método vai converter
+            1.0,  # Leverage
+            Signal.SELL,
+            amount_usdc
         )
 
         if hl_success:
-            logging.info(f"🔒 Hedge confirmado na HL para o par {pair.hl_pair}")
+            logging.info(f"🔒 Hedge confirmado na HL para {pair.hl_pair}")
 
-            # --- NOVO BLOCO: REGISTO EM MEMÓRIA ---
+            # Registo em memória para monitorização de lucro
             try:
-
-                # 2. Pegamos os dados da posição que acabámos de abrir na HL
-                # Idealmente, o teu open_new_position deve retornar o objeto da ordem ou o preço
-                # Se não retornar, podemos ir buscar a posição atualizada:
                 hl_pos = await self.exchange.get_open_position(pair.hl_pair)
+                price_perp = hl_pos.entry_price if hl_pos else 0.0
+                entry_spread = (price_perp - price_dex) / price_dex if price_dex > 0 else 0
 
-                price_perp = 0.0
-                if hl_pos is not None:
-                    price_perp = hl_pos.entry_price
-
-                # 3. Calculamos o Spread de Entrada
-                entry_spread = (price_perp - price_dex) / price_dex
-
-                # 4. Guardamos no dicionário da classe
-                self.active_positions[pair.hl_pair] = ProfitInfo(entry_spread, price_perp, price_dex, amount_usdc,
-                                                                 0.001 * amount_usdc, 0.0, time.time(), pair)
-                logging.info(
-                    f"📈 [MEMÓRIA] Posição Registada: Spread {entry_spread * 100:.4f}% | Perp: {price_perp} | Spot: {price_dex}")
-
+                self.active_positions[pair.hl_pair] = ProfitInfo(
+                    entry_spread, price_perp, price_dex, amount_usdc,
+                    0.001 * amount_usdc, 0.0, time.time(), pair
+                )
+                logging.info(f"📈 [MEMÓRIA] Posição Registada. Spread: {entry_spread * 100:.4f}%")
             except Exception as e:
-                logging.error(f"⚠️ Erro ao registar posição na memória (mas o hedge está aberto): {e}")
+                logging.error(f"⚠️ Erro ao registar em memória: {e}")
             return True
         else:
-            # PONTO DE ATENÇÃO: Se a DEX executou e a HL não, tens o token "nu" no contrato
             logging.error(f"🚨 ERRO CRÍTICO: Swap feito na DEX, mas falha ao abrir Short na HL!")
             return False
 
@@ -294,39 +290,44 @@ class MultiChainStrategy(ArbitrageBase):
         1. Close Short (Hyperliquid)
         2. Swap Token -> USDC (DEX)
         """
-        logging.info(f"💰 Realizando lucro para {pair.symbol_b} ({units} unidades)")
+        logging.info(f"💰 Iniciando fecho de ciclo para {pair.symbol_b}")
 
         # PASSO 1: Fechar Short na Hyperliquid
-        # Geralmente fechamos a mercado para garantir a saída rápida
         current_position = await self.exchange.get_open_position(pair.hl_pair)
 
         hl_success = False
-        if current_position:
-            await self.exchange.close_position(pair.hl_pair, float(current_position.size), Signal.BUY)
+        if current_position and abs(float(current_position.size)) > 0:
+            hl_size = abs(float(current_position.size))
+            logging.info(f"📉 Fechando Short de {hl_size} unidades na HL...")
+            await self.exchange.close_position(pair.hl_pair, hl_size, Signal.BUY)
+            hl_success = True
+        else:
+            logging.warning(f"⚠️ Nenhuma posição ativa na HL para {pair.hl_pair}. Prosseguindo para venda na DEX.")
             hl_success = True
 
         if not hl_success:
-            logging.error("❌ Falha ao fechar posição na HL. Abortando venda na DEX para evitar exposição.")
+            logging.error("❌ Falha crítica ao fechar posição na HL. Abortando venda na DEX.")
             return False
 
         # PASSO 2: Venda na DEX (Token -> USDC)
-        logging.info(f"✅ Short fechado na HL. Vendendo {units} {pair.symbol_b} na DEX...")
+        # Consultamos a "Verdade Absoluta" da Blockchain (Saldo Real em Wei)
+        units_in_wei = self.wallet.get_token_balance(pair.addr_b)
 
-        units_in_wei = int(units * (10 ** pair.decimal_b))
-        logging.info(f"✅ Vendendo {units_in_wei} (Wei) de {pair.symbol_b} na DEX...")
+        if units_in_wei == 0:
+            logging.error(f"❌ Erro: Saldo de {pair.symbol_b} no contrato é 0. Nada para vender.")
+            return False
 
-        # Rota: [TOKEN_VOLATIL, USDC]
+        logging.info(f"✅ Saldo real detectado: {units_in_wei} Wei. Vendendo na DEX...")
+
+        # Rota de Saída: [TOKEN_VOLATIL, USDC]
         tokens_para_saida = [pair.addr_b, pair.addr_a]
-
-        # IMPORTANTE: dir_list na saída costuma ser o inverso da entrada.
-        # Se na entrada USDC->WETH era True, agora WETH->USDC deve ser False.
         direction_exit = not direction
-        # selected_pool = list(pair.pools_map.values())[0]
+
         tx_hash = self.wallet.send_transaction(
             pools_list=[selected_pool],
             dir_list=[direction_exit],
             tokens_list=tokens_para_saida,
-            amount_usd=units_in_wei
+            amount_usd=units_in_wei  # Enviamos o saldo real em Wei (int)
         )
 
         if tx_hash:
@@ -335,8 +336,7 @@ class MultiChainStrategy(ArbitrageBase):
                 del self.active_positions[pair.hl_pair]
             return True
         else:
-            logging.error(
-                f"🚨 Alerta: Short fechado na HL, mas erro ao vender na DEX. Tens {units} {pair.symbol_b} no contrato!")
+            logging.error(f"🚨 Alerta: Short fechado na HL, mas falha no Swap da DEX. Tokens presos no contrato!")
             return False
 
     async def get_all_balances(self):
@@ -421,10 +421,11 @@ class MultiChainStrategy(ArbitrageBase):
         # Só retorna depois de verificar TODAS as pools do map
         return best_opportunity
 
+    """
     def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm):
-        """
-        Decide se o trade vale a pena com base no capital atual.
-        """
+    
+        #Decide se o trade vale a pena com base no capital atual.
+
         # 1. ROI Alvo (Return on Investment)
         # 0.001 significa que queres ganhar no mínimo 0.1% de lucro limpo sobre os $15
         # Com $15, isto daria $0.015 de lucro mínimo.
@@ -450,3 +451,33 @@ class MultiChainStrategy(ArbitrageBase):
             return True, min_profit_required, min_spread_required
 
         return False, min_profit_required, min_spread_required
+    """
+
+    def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm, is_exit=False):
+        # 1. ROI Alvo (Ajustado)
+        # Na entrada, buscamos 0.1% de lucro real.
+        # Na saída, podemos ser mais flexíveis para não ficar "preso" no trade.
+        target_roi = 0.0005 if is_exit else 0.001
+        min_profit_required = amount_usdc * target_roi
+
+        # 2. Spread de Segurança Dinâmico
+        fee_dex_percent = fee_dex_ppm / 1_000_000
+        fee_hl_percent = 0.00035
+
+        # Na entrada (DEX->HL), o buffer protege contra slippage na compra.
+        # Na saída (DEX<-HL), o buffer protege contra slippage na venda.
+        buffer_seguranca = 0.05 if is_exit else 0.15
+
+        min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
+
+        # 3. Lógica Especial de Saída (Spread Negativo)
+        # Se o spread for negativo (DEX mais cara que HL), a arbitragem inverteu totalmente.
+        # Isto é um sinal fortíssimo de saída, mesmo que o lucro seja baixo.
+        if is_exit and spread_percent <= self.min_exit_spread:
+            logging.info(f"🚨 Saída Estratégica: Spread Reverso detectado ({spread_percent}%)")
+            return True, 0, 0
+
+        # Decisão
+        success = net_profit >= min_profit_required and spread_percent >= (0 if is_exit else min_spread_required)
+
+        return success, min_profit_required, min_spread_required

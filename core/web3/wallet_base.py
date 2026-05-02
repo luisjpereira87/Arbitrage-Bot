@@ -21,7 +21,7 @@ class WalletBase(ABC):
         pass
 
     @abstractmethod
-    def get_token_balance(self, token_address: str) -> (float | None):
+    def get_token_balance(self, token_address: str) -> int:
         pass
 
     @abstractmethod

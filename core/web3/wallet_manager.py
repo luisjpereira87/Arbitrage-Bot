@@ -175,11 +175,13 @@ class WalletManager(WalletBase):
     def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str], amount_usd: float):
         # 1. TRATAMENTO DO VALOR
         # Se amount_usd já for o valor em WEI (ex: vindo da sequência de saída), não multiplicamos
+        """
         if amount_usd > 1000000:
             val_in_wei = int(amount_usd)
         else:
             val_in_wei = int(amount_usd * 10 ** 6)
-
+        """
+        val_in_wei = int(amount_usd)
         # --- DEBUG/REPORTE ATUALIZADO ---
         # Forçamos o checksum aqui para evitar leituras nulas
         t_address = self.w3.to_checksum_address(tokens_list[0])
@@ -201,9 +203,15 @@ class WalletManager(WalletBase):
         print(f"💰 Saldo Formatado: {contract_balance / 10 ** 6:.4f}")
         print(f"📉 Pedido p/ Swap (Wei): {val_in_wei}")
 
+        # Ajuste automático de "Dust" (Poeira)
         if contract_balance < val_in_wei:
-            print(f"❌ ERRO: Saldo insuficiente no contrato! ({contract_balance} < {val_in_wei})")
-            return None
+            diff = val_in_wei - contract_balance
+            if diff < 100000:  # Se faltar uma quantia ínfima, vende tudo o que tem
+                print(f"⚠️ Diferença mínima ({diff} wei). Ajustando para saldo total.")
+                val_in_wei = contract_balance
+            else:
+                print(f"❌ ERRO: Saldo insuficiente real! ({contract_balance} < {val_in_wei})")
+                return None
         print(f"---------------------------------\n")
 
         try:
@@ -280,7 +288,7 @@ class WalletManager(WalletBase):
             print(f"❌ Erro crítico no envio: {e}")
             return None
 
-    def get_token_balance(self, token_address) -> (float | None):
+    def get_token_balance(self, token_address) -> int:
         """
         Consulta o saldo de qualquer token ERC-20.
         :param token_address: Endereço do contrato do token (WETH, ARB, etc)
@@ -307,9 +315,11 @@ class WalletManager(WalletBase):
             )
 
             # Chamar a função
-            return contract.functions.balanceOf(
+            balance = contract.functions.balanceOf(
                 self.w3.to_checksum_address(owner_address)
             ).call()
+
+            return int(balance)
 
         except Exception as e:
             # Lógica de rotação de RPC que já tinhas
