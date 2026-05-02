@@ -23,3 +23,7 @@ class WalletBase(ABC):
     @abstractmethod
     def get_token_balance(self, token_address: str) -> (float | None):
         pass
+
+    @abstractmethod
+    def get_gas_cost_usd(self, eth_price: float) -> float:
+        pass

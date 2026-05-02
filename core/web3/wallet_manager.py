@@ -320,3 +320,14 @@ class WalletManager(WalletBase):
 
             print(f"❌ Erro ao consultar balanço do token {token_address}: {e}")
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
+
+    def get_gas_cost_usd(self, eth_price: float) -> float:
+        # 1. Pega o preço do gás em Wei (unidade mínima do ETH)
+        gas_price_wei = self.w3.eth.gas_price
+
+        # 2. Unidades de gás que um swap gasta na Arbitrum (~150k)
+        gas_units = 150000
+
+        # 3. Conversão para USD: (Preço em Wei * Unidades / 10^18) * Preço do ETH
+        cost_eth = (gas_price_wei * gas_units) / 10 ** 18
+        return cost_eth * eth_price

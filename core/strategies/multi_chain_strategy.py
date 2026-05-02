@@ -92,43 +92,53 @@ class MultiChainStrategy(ArbitrageBase):
         self.build_pool_cache(list(all_pools_for_cache))
 
     async def analyze_all_pairs(self):
-        # 1. Obter inventário e saldos (Cache de Memória)
+        # 1. Obter inventário e saldos
         inventory = await self.get_all_balances()
-        usdc_balance = inventory.get("USDC", 0.0)
+        usdc_dex = inventory.get("USDC", 0.0)
         hl_equity = inventory.get("hl", 0.0)
 
-        # 2. Identificar se temos algum "Token Volátil" (Batata Quente)
-        # Filtramos tokens que não são USDC nem o saldo da HL e têm saldo > 0
+        # Capital disponível para NOVAS entradas
+        usdc_balance = min(usdc_dex, hl_equity)
+
+        # 2. Identificar "Batatas Quentes" (Ativos já em carteira)
         active_tokens = {sym: units for sym, units in inventory.items()
                          if sym not in ["USDC", "hl"] and units > 0.00001}
 
-        if usdc_balance <= self.min_usdc_to_trade and hl_equity <= self.min_usdc_to_trade:
+        # 3. VERIFICAÇÃO LÓGICA:
+        # Se não temos tokens para gerir E o saldo é baixo, então paramos.
+        if not active_tokens and usdc_balance < self.min_usdc_to_trade:
             logging.info(
-                f"🚫 usdc na carteira: {usdc_balance} < {self.min_usdc_to_trade} | usdc na Hyperliquid: {hl_equity} < {self.min_usdc_to_trade}")
+                f"⏳ Modo espera: Saldo insuficiente para novas entradas (${usdc_balance:.2f})."
+            )
             return False
 
-        # 3. Recolher preços em Batch (Eficiência RPC)
-        all_pool_addrs = []
+        # 4. Se chegámos aqui, ou temos saldo ou temos posições para gerir!
+        eth_price = await self.exchange.get_entry_price("ETH/USDC:USDC")  # Usei get_prices em vez de entry_price
+        gas_cost_usdc = self.wallet.get_gas_cost_usd(eth_price)
 
+        # 5. Recolher preços em Batch
+        all_pool_addrs = []
         for pair in self.watched_pairs:
             all_pool_addrs.extend(pair.pools_map.values())
         current_prices = self.get_quotes_batch(all_pool_addrs)
 
-        # 4. LOOP DE DECISÃO
+        # 6. LOOP DE DECISÃO
         for pair in self.watched_pairs:
             price_hl = await self.exchange.get_prices(pair.hl_pair)
-            opportunity = self.find_cross_dex_spread(
-                pair.addr_a,
-                pair.addr_b,
-                pair.symbol_a,
-                pair.symbol_b,
-                price_hl.bid,
-                pair.pools_map,
-                current_prices,
-                usdc_balance)
 
-            if not opportunity: continue
+            opportunity = self.find_cross_dex_spread(
+                pair.addr_a, pair.addr_b,
+                pair.symbol_a, pair.symbol_b,
+                price_hl.bid, pair.pools_map,
+                current_prices, usdc_balance, gas_cost_usdc
+            )
+
+            if not opportunity:
+                continue
+
+            # O manage_orders agora decide se fecha o que existe ou abre o que falta
             await self.manage_orders(opportunity, pair, active_tokens, inventory, usdc_balance)
+
         return True
 
     async def manage_orders(self, opportunity: DexOpportunity, watched_pair: WatchedPair, active_tokens: dict,
@@ -141,6 +151,7 @@ class MultiChainStrategy(ArbitrageBase):
         pool_addr = opportunity.pool_addr
         dex_name = opportunity.dex_name
         direction = opportunity.direction
+        dex_fee = opportunity.dex_fee
         spread_percent = opportunity.spread
 
         symbol_a = watched_pair.symbol_a  # USDC
@@ -151,6 +162,8 @@ class MultiChainStrategy(ArbitrageBase):
             logging.warning(f"🚫 Spread de {spread_percent}% ignorado por segurança (Threshold 20%)")
             return None
 
+        check_viability, min_profit_required, min_spread_required = self.check_viability_dynamic(profit, spread_percent,
+                                                                                                 usdc_balance, dex_fee)
         logging.info(f"⚖️ {symbol_b} DEX-{dex_name}: {dex_price:.4f} | HL: {hl_price:.4f} | Net: ${profit:.4f} | "
                      f"Carteira {symbol_a}: {inventory.get(symbol_a)}, {symbol_b}: {inventory.get(symbol_b)} | "
                      f"Carteira HL {symbol_a}: {inventory.get('hl')} | "
@@ -168,7 +181,7 @@ class MultiChainStrategy(ArbitrageBase):
 
             if hl_pos is None:
                 # Caso 1: Temos o token mas NÃO temos o Short
-                if spread_percent >= self.min_entry_spread and profit >= self.min_profit:
+                if check_viability:
                     logging.info(
                         f"🚀 Spread favorável ({spread_percent:.2f}%)! Abrindo Short na HL para proteger {units} {symbol_b}...")
                     await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, False, pool_addr,
@@ -181,7 +194,7 @@ class MultiChainStrategy(ArbitrageBase):
                     return False
             else:
                 # Caso 2: Temos o token E temos o Short (Posição de Arbitragem Completa)
-                if profit >= self.min_profit or spread_percent <= self.min_exit_spread:
+                if profit >= min_profit_required or spread_percent <= min_spread_required:
                     logging.info(
                         f"💰 Lucro atingido em {symbol_b}! Spread atual: {spread_percent:.2f}%. Fechando ciclo...")
                     await self.execute_exit_sequence(watched_pair, units, pool_addr, direction)
@@ -192,16 +205,11 @@ class MultiChainStrategy(ArbitrageBase):
                     return False
         # CENÁRIO B: Carteira limpa, procurar Novas Entradas
         # Importante: só entra aqui se NÃO houver nenhum token ativo sendo gerido
-        elif not active_tokens:
-            if spread_percent >= self.min_entry_spread and profit >= self.min_profit:
-                if usdc_balance >= self.min_usdc_to_trade:
-                    logging.info(
-                        f"🎯 Nova oportunidade detectada: {spread_percent:.2f}% em {symbol_b}. Executando entrada!")
-                    await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, True, pool_addr, direction)
-                    return True
-                else:
-                    logging.warning(f"⚠️ Saldo USDC ({usdc_balance}) insuficiente para entrar em {symbol_b}")
-                    return False
+        elif not active_tokens and check_viability:
+            logging.info(
+                f"🎯 Nova oportunidade detectada: {spread_percent:.2f}% em {symbol_b}. Executando entrada!")
+            await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, True, pool_addr, direction)
+            return True
 
         return False
 
@@ -360,7 +368,7 @@ class MultiChainStrategy(ArbitrageBase):
         return raw_amount / (10 ** decimals)
 
     def find_cross_dex_spread(self, token_in, token_out, symbol_a, symbol_b, price_hl, pools_map,
-                              current_prices, amount_usdc) -> (DexOpportunity | None):
+                              current_prices, amount_usdc, gas_cost_usdc) -> (DexOpportunity | None):
         best_opportunity = None
         logging.info(f"--- 🔍 Verificando Par: {symbol_a}/{symbol_b} | Pools: {len(pools_map)}")
 
@@ -384,17 +392,27 @@ class MultiChainStrategy(ArbitrageBase):
 
                 # Cálculos de lucro e spread
                 fee_dex_percent = fee_dex_ppm / 1_000_000
-                amount_after_dex = cap_human * (1 - fee_dex_percent)
-                tokens_bought = amount_after_dex / price_dex
-                total_after_hl = (tokens_bought * price_hl) * (1 - 0.00035)
+                # Tokens que consegues comprar agora
+                tokens_bought = (cap_human * (1 - fee_dex_percent)) / price_dex
 
-                net_profit = total_after_hl - cap_human - 0.15
+                # Valor que recebes ao vender na HL (já descontando abertura e fecho de lá)
+                total_recebido_hl = (tokens_bought * price_hl) * (1 - 0.00070)  # 0.00035 * 2
+
+                # Custo total para recuperar o teu USDC na DEX (inclui a taxa de quando venderes o token)
+                custo_reverter_dex = (tokens_bought * price_dex) * fee_dex_percent
+
+                # Gás para as duas pontas
+                total_gas = gas_cost_usdc * 2
+
+                # LUCRO REAL = (O que ganhas na HL) - (O que gastaste na DEX) - (O que vais gastar para voltar) - (Gás)
+                net_profit = total_recebido_hl - cap_human - custo_reverter_dex - total_gas
+
                 spread_percent = ((price_hl / price_dex) - 1) * 100
 
                 # --- A LÓGICA DE COMPARAÇÃO ---
 
                 current_opp = DexOpportunity("MULTI_CHAIN", net_profit, spread_percent, symbol_b, price_dex, price_hl,
-                                             pool_addr, dex_name, direction)
+                                             pool_addr, dex_name, fee_dex_ppm, direction)
 
                 # Se for a primeira ou se for melhor que a anterior, guarda
                 if best_opportunity is None or current_opp.profit > best_opportunity.profit:
@@ -402,3 +420,33 @@ class MultiChainStrategy(ArbitrageBase):
 
         # Só retorna depois de verificar TODAS as pools do map
         return best_opportunity
+
+    def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm):
+        """
+        Decide se o trade vale a pena com base no capital atual.
+        """
+        # 1. ROI Alvo (Return on Investment)
+        # 0.001 significa que queres ganhar no mínimo 0.1% de lucro limpo sobre os $15
+        # Com $15, isto daria $0.015 de lucro mínimo.
+        target_roi = 0.001
+        min_profit_required = amount_usdc * target_roi
+
+        # 2. Spread de Segurança Dinâmico
+        # O spread deve ser superior às taxas totais + uma margem de segurança (Buffer)
+        # Buffer de 0.15% serve para cobrir slippage ou micro-oscilações da HL
+        fee_dex_percent = fee_dex_ppm / 1_000_000
+        fee_hl_percent = 0.00035  # 0.035%
+
+        buffer_seguranca = 0.15
+        min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
+
+        # 3. LOG de Decisão (Útil para debug no Railway)
+        logging.info(f"--- 🧠 Análise Dinâmica ---")
+        logging.info(f"Lucro: ${net_profit:.4f} (Min Req: ${min_profit_required:.4f})")
+        logging.info(f"Spread: {spread_percent:.2f}% (Min Req: {min_spread_required:.2f}%)")
+
+        # A decisão final (Mantemos o AND por segurança)
+        if net_profit >= min_profit_required and spread_percent >= min_spread_required:
+            return True, min_profit_required, min_spread_required
+
+        return False, min_profit_required, min_spread_required

@@ -11,4 +11,5 @@ class DexOpportunity:
     price_hl: float
     pool_addr: str
     dex_name: str
+    dex_fee: float
     direction: bool
