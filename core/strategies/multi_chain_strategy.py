@@ -27,7 +27,7 @@ class MultiChainStrategy(ArbitrageBase):
         self.config = properties.CONFIG
         # self.min_entry_spread = 2.5
         self.min_usdc_to_trade = 10.0
-        self.min_exit_spread = -0.1
+        self.min_exit_spread = -1.5
         # self.min_amount = 10
         self.active_positions = {}
         self.test = True
@@ -460,37 +460,6 @@ class MultiChainStrategy(ArbitrageBase):
         return best_opportunity
 
     """
-    def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm):
-    
-        #Decide se o trade vale a pena com base no capital atual.
-
-        # 1. ROI Alvo (Return on Investment)
-        # 0.001 significa que queres ganhar no mínimo 0.1% de lucro limpo sobre os $15
-        # Com $15, isto daria $0.015 de lucro mínimo.
-        target_roi = 0.001
-        min_profit_required = amount_usdc * target_roi
-
-        # 2. Spread de Segurança Dinâmico
-        # O spread deve ser superior às taxas totais + uma margem de segurança (Buffer)
-        # Buffer de 0.15% serve para cobrir slippage ou micro-oscilações da HL
-        fee_dex_percent = fee_dex_ppm / 1_000_000
-        fee_hl_percent = 0.00035  # 0.035%
-
-        buffer_seguranca = 0.15
-        min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
-
-        # 3. LOG de Decisão (Útil para debug no Railway)
-        logging.info(f"--- 🧠 Análise Dinâmica ---")
-        logging.info(f"Lucro: ${net_profit:.4f} (Min Req: ${min_profit_required:.4f})")
-        logging.info(f"Spread: {spread_percent:.2f}% (Min Req: {min_spread_required:.2f}%)")
-
-        # A decisão final (Mantemos o AND por segurança)
-        if net_profit >= min_profit_required and spread_percent >= min_spread_required:
-            return True, min_profit_required, min_spread_required
-
-        return False, min_profit_required, min_spread_required
-    """
-
     def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm, is_exit=False):
         # 1. ROI Alvo (Ajustado)
         # Na entrada, buscamos 0.1% de lucro real.
@@ -516,7 +485,7 @@ class MultiChainStrategy(ArbitrageBase):
         # 3. Lógica Especial de Saída (Spread Negativo)
         # Se o spread for negativo (DEX mais cara que HL), a arbitragem inverteu totalmente.
         # Isto é um sinal fortíssimo de saída, mesmo que o lucro seja baixo.
-        if is_exit and spread_percent <= self.min_exit_spread:
+        if is_exit and spread_percent <= self.min_exit_spread and net_profit > 0.05:
             logging.info(f"🚨 Saída Estratégica: Spread Reverso detectado ({spread_percent}%)")
             return True, 0, 0
 
@@ -524,3 +493,44 @@ class MultiChainStrategy(ArbitrageBase):
         success = net_profit >= min_profit_required and spread_percent >= (0 if is_exit else min_spread_required)
 
         return success, min_profit_required, min_spread_required
+    """
+
+    def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm, is_exit=False):
+        # --- 1. CONFIGURAÇÃO DE TAXAS ---
+        fee_dex_percent = fee_dex_ppm / 1_000_000
+        fee_hl_percent = 0.00035
+
+        # --- 2. LÓGICA DE ENTRADA ---
+        if not is_exit:
+            min_profit_required = amount_usdc * 0.001  # 0.1% ROI
+            buffer_seguranca = 0.15
+            min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
+
+            success = net_profit >= min_profit_required and spread_percent >= min_spread_required
+
+            logging.info(
+                f"📥 ENTRADA: Lucro ${net_profit:.4f}/${min_profit_required:.4f} | Spread {spread_percent:.2f}%/{min_spread_required:.2f}%")
+            return success, min_profit_required, min_spread_required
+
+        # --- 3. LÓGICA DE SAÍDA (O teu foco agora) ---
+        else:
+            # Definimos um lucro mínimo ABSOLUTO em dólar para cobrir o GAS da saída
+            # Abaixo de $0.15 de lucro bruto, o GAS de ~0.20-0.30 vai deixar-te no prejuízo.
+            min_net_profit_out = 0.20
+
+            # A condição de saída foca no Teu Alvo de Spread (-1.5%)
+            # E garante que o lucro bruto paga as contas.
+            target_reached = spread_percent <= self.min_exit_spread
+            profit_ok = net_profit >= min_net_profit_out
+
+            if target_reached and profit_ok:
+                logging.info(
+                    f"🚨 SAÍDA AUTORIZADA: Spread {spread_percent}% (Alvo: {self.min_exit_spread}%) | Lucro: ${net_profit:.4f}")
+                return True, min_net_profit_out, self.min_exit_spread
+
+            # Log de espera para não encher o console, mas manter-te informado
+            if target_reached and not profit_ok:
+                logging.warning(
+                    f"⚠️ Alvo de spread atingido ({spread_percent}%), mas lucro ${net_profit:.4f} é insuficiente para cobrir o GAS.")
+
+            return False, min_net_profit_out, self.min_exit_spread
