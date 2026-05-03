@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 
 import ccxt.async_support as ccxt
@@ -175,10 +176,6 @@ class MultiChainStrategy(ArbitrageBase):
 
             if hl_pos is None:
                 # Caso 1: Temos o token mas NÃO temos o Short (Hedge em falta)
-                # Usamos lógica de ENTRADA (is_exit=False) porque vamos abrir uma posição nova na HL
-                """
-                check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,is_exit=False)
-                """
                 logging.info(
                     f"🚀 Token em carteira sem proteção. Abrindo Short na HL para proteger {units} {symbol_b}...")
                 await self.execute_entry_sequence(watched_pair, units * dex_price, dex_price, False, pool_addr,
@@ -189,10 +186,6 @@ class MultiChainStrategy(ArbitrageBase):
                 # IMPORTANTE: Usamos lógica de SAÍDA (is_exit=True)
                 check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,
                                                                      is_exit=True)
-                """
-                logging.info(
-                    f"⚖️ Monitorizando {symbol_b}: Net: ${profit:.4f} (Alvo: ${min_p:.4f}) | Spread: {spread_percent:.2f}% (Alvo: {self.min_exit_spread}%)")
-                """
                 if check_v:
                     logging.info(f"💰 SAÍDA: {symbol_b} | Lucro: ${profit:.4f} | Spread: {spread_percent:.2f}%")
                     await self.execute_exit_sequence(watched_pair, units, pool_addr, direction)
@@ -211,10 +204,60 @@ class MultiChainStrategy(ArbitrageBase):
             if check_v:
                 logging.info(
                     f"🎯 Nova oportunidade: {spread_percent:.2f}% em {symbol_b} (Lucro Est: ${profit:.4f}). Executando!")
-                await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, True, pool_addr, direction)
+
+                ready_balance = self.adjust_balance(usdc_balance, dex_price, hl_pair, symbol_b)
+
+                await self.execute_entry_sequence(watched_pair, ready_balance, dex_price, True, pool_addr, direction)
                 return True
 
         return False
+
+    def adjust_balance(self, usdc_balance: float, dex_price: float, hl_pair: str, symbol_b: str) -> float:
+        try:
+            # 1. Garantir que os mercados estão carregados no CCXT
+            if hl_pair not in self.hl.markets:
+                logging.warning(f"⚠️ Par {hl_pair} não carregado. A tentar usar valor bruto.")
+                return usdc_balance
+
+            market = self.hl.market(hl_pair)
+
+            # 2. Calcular quantidade bruta de tokens
+            raw_qty = usdc_balance / dex_price
+
+            # 3. Obter a precisão (número de casas decimais permitidas)
+            # Na HL, isto vem geralmente em market['precision']['amount']
+            precision = market['precision']['amount']
+
+            # 4. Forçar o arredondamento para baixo (Floor) com base na precisão
+            # Se precision for 0 (caso do PENDLE), factor será 1. Se for 2, factor será 100.
+            factor = 10 ** precision
+            clean_qty = math.floor(raw_qty * factor) / factor
+
+            # 5. Converter para o formato de string/float que o CCXT aceita (evita erros de float binário)
+            clean_qty = float(self.hl.amount_to_precision(hl_pair, clean_qty))
+
+            # 6. Calcular o custo em USD para comprar EXATAMENTE essa quantidade
+            # Adicionamos 0.3% de margem para cobrir a taxa da DEX (0.05% a 0.3%) e slippage
+            # Assim garantimos que o contrato tem USDC suficiente para completar o swap
+            balance_ajustado = clean_qty * dex_price * 1.003
+
+            if balance_ajustado > usdc_balance:
+                logging.warning(f"⚠️ Ajuste excedeu balance original. Recalculando...")
+                # Se a margem de 0.3% estourou o teto, reduzimos uma unidade de precisão
+                step = 1 / factor
+                clean_qty -= step
+                balance_ajustado = clean_qty * dex_price * 1.003
+
+            logging.info(
+                f"🎯 [PRECISÃO {symbol_b}] Qtd: {clean_qty} | "
+                f"USD Original: ${usdc_balance:.2f} | USD Ajustado: ${balance_ajustado:.4f}"
+            )
+
+            return balance_ajustado
+
+        except Exception as e:
+            logging.error(f"❌ Erro crítico no adjust_balance: {e}")
+            return usdc_balance
 
     async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc: float, price_dex: float,
                                      is_dex_swap: bool, selected_pool: str, direction: bool):
