@@ -275,7 +275,7 @@ class WalletManager(WalletBase):
             print(f"❌ Erro crítico no envio: {e}")
             return None
 
-    def get_usdc_balance(self) -> (float | None):
+    def get_usdc_balance(self) -> int:
         try:
             usdc_abi = [{"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf",
                          "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"}]
@@ -286,7 +286,7 @@ class WalletManager(WalletBase):
                 self.web3_manager.rotate_rpc()
                 return self.get_usdc_balance()
             print(f"❌ Erro crítico no envio: {e}")
-            return None
+            return 0
 
     def get_token_balance(self, token_address) -> int:
         """
@@ -331,7 +331,10 @@ class WalletManager(WalletBase):
             print(f"❌ Erro ao consultar balanço do token {token_address}: {e}")
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
 
-    def get_gas_cost_usd(self, eth_price: float) -> float:
+    def get_gas_cost_usd(self, eth_price: (float | None)) -> float:
+        if eth_price is None:
+            eth_price = self._get_eth_price_chainlink()
+
         # 1. Pega o preço do gás em Wei (unidade mínima do ETH)
         gas_price_wei = self.w3.eth.gas_price
 
@@ -341,3 +344,31 @@ class WalletManager(WalletBase):
         # 3. Conversão para USD: (Preço em Wei * Unidades / 10^18) * Preço do ETH
         cost_eth = (gas_price_wei * gas_units) / 10 ** 18
         return cost_eth * eth_price
+
+    def _get_eth_price_chainlink(self):
+        try:
+            # ABI mínima para o Chainlink
+            abi = [{"inputs": [], "name": "latestRoundData",
+                    "outputs": [{"internalType": "uint80", "name": "roundId", "type": "uint256"},
+                                {"internalType": "int256", "name": "answer", "type": "int256"},
+                                {"internalType": "uint256", "name": "startedAt", "type": "uint256"},
+                                {"internalType": "uint256", "name": "updatedAt", "type": "uint256"},
+                                {"internalType": "uint80", "name": "answeredInRound", "type": "uint80"}],
+                    "stateMutability": "view", "type": "function"}]
+
+            addr = "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612"
+            contract = self.w3.eth.contract(address=self.w3.to_checksum_address(addr), abi=abi)
+
+            # O valor vem com 8 casas decimais
+            price = contract.functions.latestRoundData().call()[1]
+            return float(price) / 10 ** 8
+
+        except Exception as e:
+            # Lógica de rotação de RPC que já tinhas
+            if any(x in str(e).lower() for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+                print("🔄 RPC instável, a rodar...")
+                self.web3_manager.rotate_rpc()
+                return self._get_eth_price_chainlink()
+
+            print(f"❌ Erro ao consultar preço de eth : {e}")
+            return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois

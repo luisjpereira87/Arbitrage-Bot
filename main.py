@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 from core.bots.multi_chain_bot import MultiChainBot
+from core.config.properties_dex import PropertiesDex
 from core.config.properties_multi import PropertiesMulti
 
 """
@@ -21,12 +22,11 @@ logging.basicConfig(
 
 if __name__ == '__main__':
     properties_multi = PropertiesMulti()
+    properties_dex = PropertiesDex()
     # abi = load_abi()
 
     # --- EXECUÇÃO ---
-    # arbitrum_bot = ArbitrumBot(config)
-    # scanner.run_triangular()
-
+    # arbitrum_bot = ArbitrumBot(properties_dex)
     # arbitrum_bot.run_parallel()
 
     multi_chain_bot = MultiChainBot(properties_multi)

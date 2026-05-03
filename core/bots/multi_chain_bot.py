@@ -15,7 +15,6 @@ class MultiChainBot():
         self.web3_manager = Web3Manager()
         self.finder = PoolFinder(self.web3_manager)  # A classe que criámos
 
-        print(properties.WALLET_ADDRESS)
         self.wallet = WalletManager(self.web3_manager, properties)
 
         self.multi_chain = MultiChainStrategy(self.web3_manager, properties, self.finder, self.wallet,

@@ -22,7 +22,7 @@ class MultiChainStrategy(ArbitrageBase):
         self.finder = pool_finder
         # self.min_profit = 0.20  # Minimum $ profit to trigger
         self.wallet = wallet
-        self.capital = capital_amount
+        self.capital = wallet.get_usdc_balance()
         self.config = properties.CONFIG
         # self.min_entry_spread = 2.5
         self.min_usdc_to_trade = 10.0
@@ -49,7 +49,7 @@ class MultiChainStrategy(ArbitrageBase):
         # Mapeamos logo todas as pools possíveis para os pares que queres vigiar
         all_pools_for_cache = set()
         self.watched_pairs = []
-        FEE_TIERS = [500, 3000, 10000]
+        FEE_TIERS = self.config.fees
         for symbol_a, symbol_b, hl_pair in self.config.multi_chain:
 
             # 1. Obter endereços
@@ -176,19 +176,14 @@ class MultiChainStrategy(ArbitrageBase):
             if hl_pos is None:
                 # Caso 1: Temos o token mas NÃO temos o Short (Hedge em falta)
                 # Usamos lógica de ENTRADA (is_exit=False) porque vamos abrir uma posição nova na HL
-                check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,
-                                                                     is_exit=False)
-
-                if check_v:
-                    logging.info(
-                        f"🚀 Spread favorável ({spread_percent:.2f}%)! Abrindo Short na HL para proteger {units} {symbol_b}...")
-                    await self.execute_entry_sequence(watched_pair, usdc_balance, dex_price, False, pool_addr,
-                                                      direction)
-                else:
-                    logging.info(
-                        f"⏳ {symbol_b} em carteira, mas spread ({spread_percent:.2f}%) insuficiente para hedge. Aguardando...")
-                return False
-
+                """
+                check_v, min_p, min_s = self.check_viability_dynamic(profit, spread_percent, usdc_balance, dex_fee,is_exit=False)
+                """
+                logging.info(
+                    f"🚀 Token em carteira sem proteção. Abrindo Short na HL para proteger {units} {symbol_b}...")
+                await self.execute_entry_sequence(watched_pair, units * dex_price, dex_price, False, pool_addr,
+                                                  direction)
+                return True
             else:
                 # Caso 2: Posição de Arbitragem Completa (Token + Short)
                 # IMPORTANTE: Usamos lógica de SAÍDA (is_exit=True)

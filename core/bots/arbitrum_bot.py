@@ -1,7 +1,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from core.dclass.config_json import Config
+from core.config.properties_dex import PropertiesDex
 from core.pools.pool_finder import PoolFinder
 from core.strategies.simple_strategy import SimpleStrategy
 from core.strategies.triangular_strategy import TriangularStrategy
@@ -10,16 +10,18 @@ from core.web3.web3_manager import Web3Manager
 
 
 class ArbitrumBot:
-    def __init__(self, config_file: Config, capital_amount: float = 100.0):
+    def __init__(self, properties: PropertiesDex, capital_amount: int = 100):
 
         self.web3_manager = Web3Manager()
         self.finder = PoolFinder(self.web3_manager)  # A classe que criámos
-        self.config_file = config_file
-        self.wallet = WalletManager(self.web3_manager)
+
+        config = properties.CONFIG
+
+        self.wallet = WalletManager(self.web3_manager, properties)
         self.capital_amount = capital_amount
-        self.simple_engine = SimpleStrategy(self.web3_manager, self.config_file, self.finder, self.wallet,
+        self.simple_engine = SimpleStrategy(self.web3_manager, config, self.finder, self.wallet,
                                             self.capital_amount)
-        self.triangular_engine = TriangularStrategy(self.web3_manager, self.config_file, self.finder, self.wallet,
+        self.triangular_engine = TriangularStrategy(self.web3_manager, config, self.finder, self.wallet,
                                                     self.capital_amount)
 
     @property

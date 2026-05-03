@@ -17,7 +17,7 @@ class WalletBase(ABC):
         pass
 
     @abstractmethod
-    def get_usdc_balance(self) -> (float | None):
+    def get_usdc_balance(self) -> int:
         pass
 
     @abstractmethod
@@ -25,5 +25,5 @@ class WalletBase(ABC):
         pass
 
     @abstractmethod
-    def get_gas_cost_usd(self, eth_price: float) -> float:
+    def get_gas_cost_usd(self, eth_price: (float | None)) -> float:
         pass
