@@ -27,3 +27,8 @@ class WalletBase(ABC):
     @abstractmethod
     def get_gas_cost_usd(self, eth_price: (float | None)) -> float:
         pass
+
+    @abstractmethod
+    def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
+                       fee: int = 3000, tolerance: float = 0.007) -> tuple[bool, float]:
+        pass

@@ -1,3 +1,5 @@
+import logging
+
 from core.config.properties_base import PropertiesBase
 from core.web3.wallet_base import WalletBase
 
@@ -8,6 +10,8 @@ class WalletManager(WalletBase):
 
         # Carregar chaves (Garante que o .env está carregado antes de instanciar esta classe)
         self.private_key = properties.PRIVATE_KEY
+
+        self.config = properties.CONFIG
 
         if not self.private_key:
             raise ValueError("❌ PRIVATE_KEY não encontrada no ficheiro .env")
@@ -30,6 +34,38 @@ class WalletManager(WalletBase):
         # ABI mínima para o Approve do USDC
         self.erc20_abi = properties.ERC20_ABI
 
+        # --- NOVA CONFIGURAÇÃO UNISWAP V3 QUOTER ---
+        # Endereço do QuoterV2 no Arbitrum
+        self.quoter_address = self.w3.to_checksum_address("0x61fFE014bA17989E743c5F6cB21bF9697530B21e")
+        # ABI mínima necessária para o quoteExactInputSingle
+        self.quoter_abi = [
+            {
+                "inputs": [
+                    {
+                        "components": [
+                            {"internalType": "address", "name": "tokenIn", "type": "address"},
+                            {"internalType": "address", "name": "tokenOut", "type": "address"},
+                            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                            {"internalType": "uint24", "name": "fee", "type": "uint24"},
+                            {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+                        ],
+                        "internalType": "struct IQuoterV2.QuoteExactInputSingleParams",
+                        "name": "params",
+                        "type": "tuple"
+                    }
+                ],
+                "name": "quoteExactInputSingle",
+                "outputs": [
+                    {"internalType": "uint256", "name": "amountOut", "type": "uint256"},
+                    {"internalType": "uint160", "name": "sqrtPriceX96After", "type": "uint160"},
+                    {"internalType": "uint32", "name": "initializedTicksCrossed", "type": "uint32"},
+                    {"internalType": "uint256", "name": "gasEstimate", "type": "uint256"}
+                ],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            }
+        ]
+
         print(f"✅ WalletManager Conectado via {self.web3_manager.rpcs[self.web3_manager.current_index]}")
         print(f"💳 Carteira: {self.account.address}")
 
@@ -42,6 +78,10 @@ class WalletManager(WalletBase):
     @property
     def executor_contract(self):
         return self.w3.eth.contract(address=self.executor_address, abi=self.executor_abi)
+
+    @property
+    def quoter_contract(self):
+        return self.w3.eth.contract(address=self.quoter_address, abi=self.quoter_abi)
 
     def check_and_approve_executor(self, amount_usd: float = 100.0):
         """Dá permissão ao contrato para gastar USDC usando o RPC atual"""
@@ -82,95 +122,6 @@ class WalletManager(WalletBase):
                 return self.check_and_approve_executor(amount_usd)  # Tenta de novo com novo RPC
             print(f"❌ Erro no Approve: {e}")
             return False
-
-    """
-    def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str], amount_usd: float):
-        # 1. TRATAMENTO DO VALOR (Garante que não multiplicamos o que já está multiplicado)
-        # Se o valor for maior que 1 milhão, assumimos que já está em Wei
-        if amount_usd > 1000000:
-            val_in_wei = int(amount_usd)
-        else:
-            val_in_wei = int(amount_usd * 10 ** 6)
-
-        # --- DEBUG ATUALIZADO ---
-        # usdc_address = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
-        usdc_abi = [{"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf",
-                     "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"}]
-        usdc_contract = self.w3.eth.contract(address=self.w3.to_checksum_address(self.usdc_address), abi=usdc_abi)
-
-        contract_balance = usdc_contract.functions.balanceOf(self.executor_address).call()
-
-        print(f"\n--- 🕵️ RELATÓRIO DE EXECUÇÃO ---")
-        print(f"📍 Contrato: {self.executor_address}")
-        print(f"💰 Saldo Real no Contrato: {contract_balance / 10 ** 6:.2f} USDC")
-        print(f"📉 Pedido p/ Arbitragem: {val_in_wei / 10 ** 6:.2f} USDC")
-        print(f"🔢 Valor em Wei: {val_in_wei}")
-
-        if contract_balance < val_in_wei:
-            print(f"❌ ERRO: Saldo insuficiente! Faltam {(val_in_wei - contract_balance) / 10 ** 6:.2f} USDC")
-        print(f"---------------------------------\n")
-        # --- FIM DEBUG ---
-
-        #Executa a arbitragem atómica usando o RPC do momento
-        try:
-            # Formatação de endereços
-            pools_ck = [self.w3.to_checksum_address(p) for p in pools_list]
-            tokens_ck = [self.w3.to_checksum_address(t) for t in tokens_list]
-
-            # 1. Simulação (Dry Run)
-            try:
-                self.executor_contract.functions.startArbitrage(
-                    val_in_wei, pools_ck, dir_list, tokens_ck
-                ).call({'from': self.account.address})
-                print("✅ Simulação passou com sucesso!")
-            except Exception as sim_err:
-                if "429" in str(sim_err):
-                    self.web3_manager.rotate_rpc()
-                    return self.send_transaction(pools_list, dir_list, tokens_list, amount_usd)
-                print(f"⚠️ Simulação falhou: {sim_err}")
-                return None
-
-            # 2. Envio Real
-            latest_block = self.w3.eth.get_block('latest')
-            base_fee = latest_block.get('baseFeePerGas', self.w3.to_wei('0.1', 'gwei'))
-
-            real_nonce = self.w3.eth.get_transaction_count(self.account.address)
-
-            # Se o nosso contador interno for menor que o real, corrigimos
-            if self._current_nonce is None or self._current_nonce < real_nonce:
-                self._current_nonce = real_nonce
-
-            tx = self.executor_contract.functions.startArbitrage(
-                val_in_wei, pools_ck, dir_list, tokens_ck
-            ).build_transaction({
-                'from': self.account.address,
-                'nonce': self._current_nonce,
-                'gas': 1000000,
-                # Vamos simplificar o gás para o Ganache não reclamar do EIP-1559
-                'gasPrice': self.w3.eth.gas_price,
-                'chainId': self.w3.eth.chain_id  # <--- DINÂMICO: Ele vai ler o ID do Ganache
-            })
-
-            signed = self.w3.eth.account.sign_transaction(tx, self.private_key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-
-            self._current_nonce += 1
-            final_balance_contract = usdc_contract.functions.balanceOf(self.executor_address).call()
-
-            print(f"💰 Saldo Real final no Contrato: {final_balance_contract / 10 ** 6:.2f} USDC")
-            return self.w3.to_hex(tx_hash)
-
-        except Exception as e:
-            if "nonce" in str(e).lower():
-                self._current_nonce = self.w3.eth.get_transaction_count(self.account.address)
-                print(f"🔄 Erro de sincronização. Novo Nonce base: {self._current_nonce}")
-
-            if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
-                self.web3_manager.rotate_rpc()
-                return self.send_transaction(pools_list, dir_list, tokens_list, amount_usd)
-            print(f"❌ Erro crítico no envio: {e}")
-            return None
-    """
 
     def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str], amount_usd: float):
         # 1. TRATAMENTO DO VALOR
@@ -372,3 +323,59 @@ class WalletManager(WalletBase):
 
             print(f"❌ Erro ao consultar preço de eth : {e}")
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
+
+    def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
+                       fee: int = 3000, tolerance: float = 0.007):
+        """
+        Simula o swap na Uniswap V3 de forma dinâmica usando os decimais do Config.
+        """
+        try:
+            # 1. Procurar metadados dos tokens no Config pelo endereço
+            t_in_info = self.config.tokens_by_address.get(token_in.lower())
+            t_out_info = self.config.tokens_by_address.get(token_out.lower())
+
+            # Fallback para 18 decimais caso o token não esteja no config (padrão ERC20)
+            dec_in = t_in_info.decimals if t_in_info else 18
+            dec_out = t_out_info.decimals if t_out_info else 18
+
+            # 2. Converter a entrada para a unidade base (Wei/Raw) correta
+            # Se amount_in_usd for 100 e dec_in for 18, teremos 100 * 10^18
+            amount_in_raw = int(amount_in_usd * 10 ** dec_in)
+
+            params = (
+                self.w3.to_checksum_address(token_in),
+                self.w3.to_checksum_address(token_out),
+                amount_in_raw,
+                fee,
+                0
+            )
+
+            # 3. Chamar o Quoter (Simulação On-Chain)
+            # Retorna: (amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate)
+            quote_data = self.quoter_contract.functions.quoteExactInputSingle(params).call()
+
+            # 4. Converter a saída de Wei para unidades humanas
+            amount_out_real = quote_data[0] / 10 ** dec_out
+
+            # 5. Validação de Slippage
+            min_acceptable = expected_out_units * (1 - tolerance)
+
+            if amount_out_real < min_acceptable:
+                # Usamos 4 casas decimais para tokens caros como WBTC ou ETH
+                logging.warning(
+                    f"⚠️ Swap REJEITADO: Real {amount_out_real:.4f} < Min {min_acceptable:.4f} (Fee: {fee})")
+                return False, amount_out_real
+
+            logging.info(
+                f"✅ Swap validado: Receberás aprox. {amount_out_real:.4f} {t_out_info.symbol if t_out_info else ''}")
+            return True, amount_out_real
+
+        except Exception as e:
+            # Lógica de rotação de RPC em caso de erro de rede
+            if any(x in str(e).lower() for x in ["401", "429", "500", "timeout"]):
+                logging.warning("🔄 RPC Error detectado no Quoter. Rotacionando...")
+                self.web3_manager.rotate_rpc()
+                return self.is_swap_viable(token_in, token_out, amount_in_usd, expected_out_units, fee, tolerance)
+
+            logging.error(f"❌ Erro na simulação do Quoter: {e}")
+            return False, 0

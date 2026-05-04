@@ -12,6 +12,7 @@ class Config:
     triangles: List[Tuple[str, str, str]] = field(init=False)
     simple_pairs: List[Tuple[str, str]] = field(init=False)
     multi_chain: List[Tuple[str, str, str]] = field(init=False)
+    tokens_by_address: Dict[str, 'TokenInfo'] = field(init=False)
 
     def __post_init__(self):
         # O post_init corre logo após o objeto ser criado com o file_path
@@ -25,6 +26,11 @@ class Config:
         self.tokens = {
             sym: TokenInfo(symbol=sym, address=info["addr"], decimals=info["dec"])
             for sym, info in data["tokens"].items()
+        }
+
+        self.tokens_by_address = {
+            tk.address.lower(): tk
+            for tk in self.tokens.values()
         }
 
         # 2. Mapear Fees

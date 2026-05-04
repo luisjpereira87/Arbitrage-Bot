@@ -5,9 +5,7 @@ import logging
 from dotenv import load_dotenv
 
 from core.bots.multi_chain_bot import MultiChainBot
-from core.config.properties_dex import PropertiesDex
 from core.config.properties_multi import PropertiesMulti
-from core.utils.paths import TradePosition
 
 """
 def load_abi():
@@ -27,15 +25,17 @@ logging.basicConfig(
 
 if __name__ == '__main__':
     properties_multi = PropertiesMulti()
-    properties_dex = PropertiesDex()
+    # properties_dex = PropertiesDex()
     # abi = load_abi()
 
     # --- EXECUÇÃO -
     # arbitrum_bot = ArbitrumBot(properties_dex)
     # arbitrum_bot.run_parallel()
-    TradePosition.empty_position()
+    # TradePosition.empty_position()
     multi_chain_bot = MultiChainBot(properties_multi)
     asyncio.run(multi_chain_bot.run())
+
+    # multi_chain_bot.test_manual_quote()
 
     # t = WalletManager( Web3Manager())
     # t.check_and_approve_executor(100.0)
