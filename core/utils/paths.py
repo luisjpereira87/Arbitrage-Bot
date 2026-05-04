@@ -79,6 +79,7 @@ class TradePosition:
         with file_path.open("w", encoding="utf-8") as f:
             f.write(position.model_dump_json(indent=4))
         logging.info(f"💾 Posição de {position.symbol} guardada no JSON.")
+        return position
 
     @staticmethod
     def clear_position():

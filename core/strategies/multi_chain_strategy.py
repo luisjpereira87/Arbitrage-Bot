@@ -31,8 +31,10 @@ class MultiChainStrategy(ArbitrageBase):
         self.min_usdc_to_trade = 10.0
         self.min_exit_spread = -1.5
         # self.min_amount = 10
-        self.active_positions = {}
-        self.test = True
+        # self.active_positions = {}
+        # self.test = True
+
+        self.active_position = TradePosition.get_position()
 
         self.hl = ccxt.hyperliquid({
             "walletAddress": properties.WALLET_ADDRESS_HL,
@@ -95,7 +97,6 @@ class MultiChainStrategy(ArbitrageBase):
         self.build_pool_cache(list(all_pools_for_cache))
 
     async def analyze_all_pairs(self):
-        pos = TradePosition.get_position()
 
         # 1. Obter inventário e saldos
         inventory = await self.get_all_balances()
@@ -132,9 +133,9 @@ class MultiChainStrategy(ArbitrageBase):
         # 6. LOOP DE DECISÃO
         for pair in self.watched_pairs:
 
-            if pos is not None:
+            if self.active_position is not None:
                 # Extrai o símbolo base do JSON (ex: "ARB/USDC" -> "ARB")
-                pos_base_symbol = pos.symbol.split('/')[0]
+                pos_base_symbol = self.active_position.symbol.split('/')[0]
                 if pair.symbol_b != pos_base_symbol:
                     continue
 
@@ -177,12 +178,11 @@ class MultiChainStrategy(ArbitrageBase):
         # --- LÓGICA DE EXECUÇÃO / GESTÃO ---
 
         # CENÁRIO A: Monitorização de Posição Aberta (Lido via JSON)
-        pos = TradePosition.get_position()
 
-        if pos and pos.status == "OPEN":
-            if symbol_b in pos.symbol:
+        if self.active_position and self.active_position.status == "OPEN":
+            if symbol_b in self.active_position.symbol:
                 # 1. Calcular Lucro Real Absoluto (Baseado no JSON)
-                current_profit_real = TradePosition.check_exit_profitability(pos, dex_price, hl_price)
+                current_profit_real = TradePosition.check_exit_profitability(self.active_position, dex_price, hl_price)
 
                 # 2. Validar Saída (Nova Assinatura: foco no lucro real)
                 # Nota: amount_usdc não é usado na saída, passamos None ou 0
@@ -195,7 +195,7 @@ class MultiChainStrategy(ArbitrageBase):
                 if check_v:
                     logging.info(f"💰 META ATINGIDA: Fechando {symbol_b} | Lucro Real: ${current_profit_real:.4f}")
                     # Importante: units_dex vem do JSON para garantir que vendemos TUDO o que compramos
-                    await self.execute_exit_sequence(watched_pair, pos.units_dex, pool_addr, direction)
+                    await self.execute_exit_sequence(watched_pair, self.active_position.units_dex, pool_addr, direction)
                     return True
                 else:
                     # O log agora mostra quanto falta para o teu alvo de $0.20
@@ -204,11 +204,12 @@ class MultiChainStrategy(ArbitrageBase):
                     return False
             else:
                 # Se for outro par (ex: AAVE), ignora a monitorização e não tenta abrir nada
-                logging.info(f"⏳ Já existe uma posição aberta em {pos.symbol}. Ignorando {symbol_b}...")
+                logging.info(
+                    f"⏳ Já existe uma posição aberta em {self.active_position.symbol}. Ignorando {symbol_b}...")
                 return False
 
         # CENÁRIO B: Procurar Novas Entradas (Se não houver posição no JSON)
-        elif not pos:
+        elif not self.active_position:
             # Validar Entrada (Ainda usamos spread e lucro estimado)
             check_v = self.check_viability_dynamic(
                 net_profit=profit,
@@ -333,6 +334,7 @@ class MultiChainStrategy(ArbitrageBase):
             )
 
             TradePosition.save_position(new_pos)
+            self.active_position = new_pos
             logging.info(f"💾 JSON Criado: {units_bought} {pair.symbol_b} comprados.")
             return True
         else:
@@ -387,7 +389,7 @@ class MultiChainStrategy(ArbitrageBase):
         if tx_hash:
             logging.info(f"💵 Ciclo concluído com sucesso! TX: {tx_hash}")
             TradePosition.clear_position()
-
+            self.active_position = None
             return True
         else:
             logging.error(f"🚨 Alerta: Short fechado na HL, mas falha no Swap da DEX. Tokens presos no contrato!")
