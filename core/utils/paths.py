@@ -38,9 +38,9 @@ class TradePosition:
                 "status": "OPEN",
                 "symbol": "ARB/USDC",
                 "units_dex": 110.00758388805156,
-                "initial_balance_dex_usd": 13.03,
-                "initial_balance_hl_usd": 13.43442,
-                "total_initial_usd": 26.86884,
+                "initial_balance_dex_usd": 12.00,
+                "initial_balance_hl_usd": 13.00,
+                "total_initial_usd": 25.00,
                 "entry_price_hl": 0.11866,
                 "timestamp": "2026-05-04T13:40:00"
             }
