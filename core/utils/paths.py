@@ -28,8 +28,12 @@ class TradePosition:
 
     @staticmethod
     def empty_position():
+        # Garante que MODEL_STORAGE é o caminho do volume (ex: /app/data)
         file_path = Path(os.path.join(MODEL_STORAGE, 'active_position.json'))
+
         if not file_path.exists():
+            logging.info(f"📁 Ficheiro não encontrado em {file_path}. Criando posição inicial de ARB...")
+
             data = {
                 "status": "OPEN",
                 "symbol": "ARB/USDC",
@@ -40,8 +44,16 @@ class TradePosition:
                 "entry_price_hl": 0.11866,
                 "timestamp": "2026-05-04T13:40:00"
             }
-            with file_path.open("r", encoding="utf-8") as f:
-                json.dump(data, f)
+
+            try:
+                # USAR "w" para criar/escrever, não "r"
+                with file_path.open("w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4)
+                logging.info("✅ Posição inicial ARB injetada com sucesso!")
+            except Exception as e:
+                logging.error(f"❌ Erro ao criar ficheiro no volume: {e}")
+        else:
+            logging.info("💾 Ficheiro de posição já existe. Seguindo monitorização.")
 
     @staticmethod
     def get_position():
