@@ -1,7 +1,6 @@
 # This is a sample Python script.
 import asyncio
 import logging
-import os
 
 from dotenv import load_dotenv
 
@@ -17,8 +16,6 @@ def load_abi():
 """
 
 load_dotenv()
-
-MODEL_STORAGE = os.getenv("STORAGE_PATH", os.path.join(BASE_DIR, "models_storage"))
 
 logging.basicConfig(
     level=logging.INFO,
