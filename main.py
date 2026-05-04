@@ -1,16 +1,24 @@
 # This is a sample Python script.
 import asyncio
 import logging
+import os
+
+from dotenv import load_dotenv
 
 from core.bots.multi_chain_bot import MultiChainBot
 from core.config.properties_dex import PropertiesDex
 from core.config.properties_multi import PropertiesMulti
+from core.utils.paths import TradePosition
 
 """
 def load_abi():
     with open("abi.json", "r") as f:
         return json.load(f)
 """
+
+load_dotenv()
+
+MODEL_STORAGE = os.getenv("STORAGE_PATH", os.path.join(BASE_DIR, "models_storage"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +33,10 @@ if __name__ == '__main__':
     properties_dex = PropertiesDex()
     # abi = load_abi()
 
-    # --- EXECUÇÃO ---
+    # --- EXECUÇÃO -
     # arbitrum_bot = ArbitrumBot(properties_dex)
     # arbitrum_bot.run_parallel()
-
+    TradePosition.empty_position()
     multi_chain_bot = MultiChainBot(properties_multi)
     asyncio.run(multi_chain_bot.run())
 
