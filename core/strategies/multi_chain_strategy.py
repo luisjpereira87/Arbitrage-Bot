@@ -48,7 +48,7 @@ class MultiChainStrategy(ArbitrageBase):
 
         self.exchange = ExchangeClient(self.hl, properties.WALLET_ADDRESS_HL)
 
-        self.pool_blacklist = {}  # { "pool_address": timestamp_liberacao }
+        self.pool_blacklist: dict = {}  # { "pool_address": timestamp_liberacao }
         self.blacklist_duration = 300  # 5 minutos de "castigo"
 
         self.init_cache()
@@ -229,7 +229,7 @@ class MultiChainStrategy(ArbitrageBase):
 
                 # Passamos o real_units para a entrada para garantir hedge perfeito
                 await self.execute_entry_sequence(
-                    watched_pair, ready_balance, dex_price, int(dex_fee), True,
+                    watched_pair, ready_balance, dex_price, int(dex_fee),
                     pool_addr, direction
                 )
                 return True
@@ -284,79 +284,118 @@ class MultiChainStrategy(ArbitrageBase):
             return usdc_balance
 
     async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc: float, dex_price: float,
-                                     dex_fee: int,
-                                     is_dex_swap: bool, selected_pool: str, direction: bool):
+                                     dex_fee: int, selected_pool: str, direction: bool):
 
-        logging.info(f"🚀 Validando cotação final para entrada...")
-        # expected_units = (amount_usdc * (1 - (dex_fee / 1_000_000))) / dex_price
+        # 1. Validação inicial de segurança
+        if amount_usdc < 11.0:
+            logging.warning(f"🚫 Abortando: Valor ${amount_usdc:.2f} inferior ao mínimo CEX.")
+            return False
+
+        # 2. Check de Liquidez e Obtenção de Unidades REAIS
         expected_units = amount_usdc / dex_price
-
-        # 1. Double Check de Liquidez
         viable, real_units = self.wallet.is_swap_viable(
             token_in=pair.addr_a,
             token_out=pair.addr_b,
             amount_in_usd=amount_usdc,
             expected_out_units=expected_units,
             fee=dex_fee,
-            tolerance=0.005  # Rigoroso: 0.5%
+            tolerance=0.005
         )
 
-        if not viable:
-            logging.error("❌ Abortando: Preço mudou ou liquidez caiu no momento da execução!")
+        # CÁLCULO DO VALOR REAL QUE VAI SER EXECUTADO
+        # É aqui que corrigimos a incoerência: o valor na HL deve ser igual ao valor da DEX
+        actual_trade_value_usdc = real_units * dex_price
+
+        if not viable or actual_trade_value_usdc < 10.5:
+            logging.error(
+                f"❌ Abortando: Liquidez insuficiente ou valor final (${actual_trade_value_usdc:.2f}) abaixo do mínimo.")
             self.pool_blacklist[selected_pool.lower()] = time.time() + self.blacklist_duration
             return False
 
-        logging.info(f"🚀 Iniciando entrada em {pair.symbol_b} com {amount_usdc} USDC")
+        logging.info(f"🚀 Iniciando entrada: DEX (${actual_trade_value_usdc:.2f}) | HL (${actual_trade_value_usdc:.2f})")
 
-        # 1. Capturamos o saldo HL ANTES (apenas para referência de margem)
-        inventory_before = await self.get_all_balances()
-        # Recomendação: usar o amount_usdc como base de custo, não o saldo total da wallet
-        usdc_used_dex = amount_usdc
-        usdc_used_hl = amount_usdc  # Se fazes 1:1
+        # 3. Execução na DEX
 
-        if is_dex_swap:
-            usdc_wei = int(amount_usdc * (10 ** pair.decimal_a))
-            tx_hash = self.wallet.send_transaction(
-                pools_list=[selected_pool],
-                dir_list=[direction],
-                tokens_list=[pair.addr_a, pair.addr_b],
-                amount_usd=usdc_wei
-            )
+        # Importante: usar o valor que a liquidez permite, convertido para Wei
+        usdc_wei = int(actual_trade_value_usdc * (10 ** pair.decimal_a))
 
-            if not tx_hash:
-                logging.error("❌ Falha na DEX. Abortando.")
-                return False
-
-            # --- CRÍTICO: Esperar a transação ser confirmada ---
-            logging.info(f"⏳ Aguardando confirmação da DEX (Hash: {tx_hash})...")
-            # Se a tua função wallet tiver um wait, usa-o aqui.
-            await asyncio.sleep(2)  # Pausa mínima para a chain processar
-
-        # 2. Hedge na Hyperliquid
-        hl_result = await self.exchange.open_new_position(
-            pair.hl_pair, 1.0, Signal.SELL, amount_usdc
+        tx_hash = self.wallet.send_transaction(
+            pools_list=[selected_pool],
+            dir_list=[direction],
+            tokens_list=[pair.addr_a, pair.addr_b],
+            amount_usd=usdc_wei
         )
 
-        if hl_result:  # hl_result deve ser o objeto retornado (hl_success no teu código)
-            logging.info(f"🔒 Hedge confirmado na HL")
+        if not tx_hash:
+            logging.error("❌ Falha crítica no envio da transação DEX.")
+            return False
+
+        logging.info(f"⏳ Aguardando confirmação DEX (Hash: {tx_hash})...")
+        await asyncio.sleep(3)  # Aumentado para 3s para dar folga ao RPC
+
+        # 4. Hedge na Hyperliquid (Usando o MESMO valor que entrou na DEX)
+        try:
+            hl_result = await self.exchange.open_new_position(
+                pair.hl_pair,
+                1.0,
+                Signal.SELL,
+                actual_trade_value_usdc  # <--- AGORA ESTÁ SINCRONIZADO
+            )
+        except Exception as e:
+            logging.error(f"💥 Exceção ao abrir posição na HL: {e}")
+            hl_result = None
+
+        # 5. Validação do Hedge e Rollback
+        if hl_result:
+            logging.info(f"🔒 Hedge confirmado na HL a ${hl_result.price}")
 
             new_pos = ActivePosition(
                 status="OPEN",
                 symbol=f"{pair.symbol_b}/USDC",
                 units_dex=float(real_units),
-                initial_balance_dex_usd=usdc_used_dex,  # O valor do trade, não da wallet total
-                initial_balance_hl_usd=usdc_used_hl,
-                total_initial_usd=usdc_used_dex + usdc_used_hl,
-                entry_price_hl=hl_result.price,  # Usa o preço real de execução
+                initial_balance_dex_usd=actual_trade_value_usdc,
+                initial_balance_hl_usd=actual_trade_value_usdc,
+                total_initial_usd=actual_trade_value_usdc * 2,
+                entry_price_hl=hl_result.price,
                 timestamp=datetime.now().isoformat()
             )
 
             TradePosition.save_position(new_pos)
             self.active_position = new_pos
-            logging.info(f"💾 JSON Criado: {real_units} {pair.symbol_b} comprados.")
             return True
         else:
-            logging.error("🚨 ERRO CRÍTICO: Swap feito mas Hedge falhou!")
+            self.force_exit_to_usdc(pair.addr_b, pair.addr_a, real_units, selected_pool, not direction)
+
+            return False
+
+    def force_exit_to_usdc(self, token_address, usdc_addr, amount_units, pool_to_use, direction_to_use):
+        """
+        Saída de emergência sem dependência de estado interno volátil.
+        """
+        logging.critical(f"🚨 [EMERGENCY] Tentando vender {amount_units} do token {token_address}")
+
+        try:
+
+            # 1. Obter decimais do token (via teu config ou helper)
+            decimals = self.config.tokens_by_address(token_address)
+            amount_in_wei = int(amount_units * (10 ** decimals))
+
+            # 2. Executar o swap de reversão
+            tx_hash = self.wallet.send_transaction(
+                pools_list=[pool_to_use],
+                dir_list=[direction_to_use],
+                tokens_list=[token_address, usdc_addr],
+                amount_usd=amount_in_wei
+            )
+
+            if tx_hash:
+                logging.info(f"✅ [EMERGENCY] Sucesso! Hash: {tx_hash}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logging.error(f"💀 [EMERGENCY] Falha crítica na saída de emergência: {e}")
             return False
 
     async def execute_exit_sequence(self, pair: WatchedPair, units, selected_pool: str, direction: bool,

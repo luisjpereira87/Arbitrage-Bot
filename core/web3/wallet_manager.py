@@ -20,8 +20,6 @@ class WalletManager(WalletBase):
         # Nota: Usamos self.w3 (a propriedade dinâmica que criaremos abaixo)
         self.account = self.w3.eth.account.from_key(self.private_key)
 
-        print(self.account.address)
-
         self.executor_address = self.w3.to_checksum_address(properties.CONTRACT_ADDRESS)
 
         self._current_nonce = None
