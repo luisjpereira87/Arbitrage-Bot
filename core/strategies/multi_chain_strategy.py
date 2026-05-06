@@ -175,6 +175,8 @@ class MultiChainStrategy(ArbitrageBase):
         symbol_b = watched_pair.symbol_b
         hl_pair = watched_pair.hl_pair
 
+        print("AQUIII", self.active_position)
+
         if abs(spread_percent) > 20:
             logging.warning(f"🚫 Spread de {spread_percent}% ignorado por segurança (Threshold 20%)")
             return None
