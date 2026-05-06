@@ -701,7 +701,7 @@ class MultiChainStrategy(ArbitrageBase):
         # --- 1. LÓGICA DE ENTRADA ---
         if not is_exit:
             min_profit_required = amount_usdc * 0.001  # 0.1% ROI esperado
-            min_spread_required = 0.50  # 0.5% de spread mínimo
+            min_spread_required = 0.70  # 0.5% de spread mínimo
 
             success = net_profit >= min_profit_required and spread_percent >= min_spread_required
 
@@ -713,7 +713,7 @@ class MultiChainStrategy(ArbitrageBase):
 
         # --- 2. LÓGICA DE SAÍDA ---
         else:
-            min_net_profit_out = 0.20
+            min_net_profit_out = 0.50
 
             # Log consolidado: Lucro Real vs Comportamento do Mercado (Spread)
             # O spread_percent aqui ajuda-te a ver se a arbitragem está a convergir
