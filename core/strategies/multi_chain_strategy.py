@@ -186,6 +186,7 @@ class MultiChainStrategy(ArbitrageBase):
         if self.active_position and self.active_position.status == "OPEN":
             if symbol_b in self.active_position.symbol:
                 # 1. Calcular Lucro Real Absoluto (Baseado no JSON)
+
                 current_profit_real = TradePosition.check_exit_profitability(self.active_position, dex_price, hl_price)
 
                 # 2. Validar Saída (Nova Assinatura: foco no lucro real)
@@ -203,9 +204,13 @@ class MultiChainStrategy(ArbitrageBase):
                                                      dex_price, int(dex_fee))
                     return True
                 else:
+                    logging.info(
+                        f"JSON INFO: {self.active_position}")
+
+                    lucro_seguro = current_profit_real if current_profit_real is not None else 0.0
                     # O log agora mostra quanto falta para o teu alvo de $0.20
                     logging.info(
-                        f"💎 MONITORANDO: {symbol_b} | Lucro Real: ${current_profit_real:.4f} | Spread: {spread_percent:.2f}%")
+                        f"💎 MONITORANDO: {symbol_b} | Lucro Real: ${lucro_seguro:.4f} | Spread: {spread_percent:.2f}%")
                     return False
             else:
                 # Se for outro par (ex: AAVE), ignora a monitorização e não tenta abrir nada
