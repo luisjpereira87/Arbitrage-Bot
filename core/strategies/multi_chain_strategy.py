@@ -145,10 +145,16 @@ class MultiChainStrategy(ArbitrageBase):
 
             price_hl = await self.exchange.get_prices(pair.hl_pair)
 
+            if price_hl and hasattr(price_hl, 'bid') and price_hl.bid is not None:
+                hl_price = price_hl.bid
+            else:
+                logging.warning("⚠️ Falha ao obter bid da HL, saltando verificação...")
+                continue
+
             opportunity = self.find_cross_dex_spread(
                 pair.addr_a, pair.addr_b,
                 pair.symbol_a, pair.symbol_b,
-                price_hl.bid, pair.pools_map,
+                hl_price, pair.pools_map,
                 current_prices, usdc_balance, gas_cost_usdc
             )
 
@@ -156,7 +162,7 @@ class MultiChainStrategy(ArbitrageBase):
                 continue
 
             # O manage_orders agora decide se fecha o que existe ou abre o que falta
-            await self.manage_orders(opportunity, pair, usdc_balance, price_hl.bid)
+            await self.manage_orders(opportunity, pair, usdc_balance, hl_price)
 
         return True
 

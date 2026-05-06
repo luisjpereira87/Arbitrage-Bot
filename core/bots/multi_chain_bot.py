@@ -28,10 +28,17 @@ class MultiChainBot():
             try:
 
                 await self.multi_chain.analyze_all_pairs()
-                await asyncio.sleep(2)
+
+                # Se temos uma posição ativa, queremos monitorizar mais de perto
+                if self.multi_chain.active_position:
+                    # 5 a 7 segundos é um "doce balanço" para não levar 429
+                    await asyncio.sleep(6)
+                else:
+                    # Se não há nada aberto, podemos relaxar para 10-15 segundos
+                    await asyncio.sleep(12)
             except Exception as e:
                 logging.error(f"Erro no loop: {e}")
-                await asyncio.sleep(2)
+                await asyncio.sleep(20)
 
     def test_manual_quote(self):
         # 1. Setup das configurações e wallet
