@@ -174,8 +174,6 @@ class MultiChainStrategy(ArbitrageBase):
         symbol_b = watched_pair.symbol_b
         hl_pair = watched_pair.hl_pair
 
-        print("AQUIII", self.active_position)
-
         if abs(spread_percent) > 20:
             logging.warning(f"🚫 Spread de {spread_percent}% ignorado por segurança (Threshold 20%)")
             return None
@@ -187,13 +185,13 @@ class MultiChainStrategy(ArbitrageBase):
         if self.active_position and self.active_position.status == "OPEN":
             if symbol_b in self.active_position.symbol:
                 # 1. Calcular Lucro Real Absoluto (Baseado no JSON)
-                print("PRICE DEX", dex_price, "PRICE hl", price_hl)
                 current_profit_real = TradePosition.check_exit_profitability(self.active_position, dex_price, price_hl)
 
                 # 2. Validar Saída (Nova Assinatura: foco no lucro real)
                 # Nota: amount_usdc não é usado na saída, passamos None ou 0
                 check_v = self.check_viability_dynamic(
                     net_profit=current_profit_real,
+                    spread_percent=spread_percent,
                     amount_usdc=0,
                     is_exit=True
                 )
