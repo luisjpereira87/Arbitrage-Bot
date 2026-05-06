@@ -85,6 +85,25 @@ class ExchangeClient(ExchangeBase, ABC):
             logging.error(f"⚠️ Erro ao obter preços ({pair}): {e}")
             return None
 
+    async def get_multiple_prices(self, pairs: list[str]) -> (dict[str, Prices] | None):
+        try:
+            # fetch_ticker no CCXT para Hyperliquid retorna bid, ask e last
+            tickers = await self.exchange.fetch_tickers(pairs)
+
+            results = {}
+            for symbol, ticker in tickers.items():
+                # Criamos um objeto Prices para cada par encontrado
+                results[symbol] = Prices(
+                    bid=ticker.get('bid'),
+                    ask=ticker.get('ask'),
+                    last=ticker.get('last')
+                )
+            return results
+
+        except Exception as e:
+            logging.error(f"⚠️ Erro ao obter preços ({pairs}): {e}")
+            return None
+
     async def get_open_position(self, symbol: str = '') -> (OpenPosition | None):
         try:
             positions = await self.exchange.fetch_positions(params={'user': self.wallet_address})

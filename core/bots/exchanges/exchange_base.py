@@ -33,6 +33,10 @@ class ExchangeBase(ABC):
         pass
 
     @abstractmethod
+    async def get_multiple_prices(self, pairs: list[str]) -> (dict[str, Prices] | None):
+        pass
+
+    @abstractmethod
     async def close_position(self, symbol: str, amount: float, side: Signal):
         pass
 

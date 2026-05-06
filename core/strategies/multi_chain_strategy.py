@@ -124,8 +124,12 @@ class MultiChainStrategy(ArbitrageBase):
             )
             return False
 
+        symbols_to_fetch = [p.hl_pair for p in self.watched_pairs]
+        all_prices_hl = await self.exchange.get_multiple_prices(symbols_to_fetch)
+
         # 4. Se chegámos aqui, ou temos saldo ou temos posições para gerir!
-        eth_price = await self.exchange.get_entry_price("ETH/USDC:USDC")  # Usei get_prices em vez de entry_price
+        eth_price = all_prices_hl['ETH/USDC:USDC'].bid
+        # eth_price = await self.exchange.get_entry_price("ETH/USDC:USDC")  # Usei get_prices em vez de entry_price
         gas_cost_usdc = self.wallet.get_gas_cost_usd(eth_price)
 
         # 5. Recolher preços em Batch
@@ -143,14 +147,19 @@ class MultiChainStrategy(ArbitrageBase):
                 if pair.symbol_b != pos_base_symbol:
                     continue
 
-            price_hl = await self.exchange.get_prices(pair.hl_pair)
+            price_data = all_prices_hl[pair.hl_pair]
+            if not price_data or price_data.bid is None:
+                logging.warning(f"⚠️ Sem dados para {pair.hl_pair}, saltando...")
+                continue
+            hl_price = price_data.bid
 
+            """
             if price_hl and hasattr(price_hl, 'bid') and price_hl.bid is not None:
                 hl_price = price_hl.bid
             else:
                 logging.warning("⚠️ Falha ao obter bid da HL, saltando verificação...")
                 continue
-
+            """
             opportunity = self.find_cross_dex_spread(
                 pair.addr_a, pair.addr_b,
                 pair.symbol_a, pair.symbol_b,
@@ -401,7 +410,8 @@ class MultiChainStrategy(ArbitrageBase):
 
             return False
 
-    def force_exit_to_usdc(self, token_address, usdc_addr, amount_units, pool_to_use, direction_to_use):
+    def force_exit_to_usdc(self, token_address: str, usdc_addr: str, amount_units: float, pool_to_use: str,
+                           direction_to_use: bool):
         """
         Saída de emergência sem dependência de estado interno volátil.
         """
@@ -410,8 +420,9 @@ class MultiChainStrategy(ArbitrageBase):
         try:
 
             # 1. Obter decimais do token (via teu config ou helper)
-            decimals = self.config.tokens_by_address(token_address)
-            amount_in_wei = int(amount_units * (10 ** decimals))
+            t_addr_info = self.config.tokens_by_address.get(token_address)
+            dec_in = t_addr_info.decimals if t_addr_info else 18
+            amount_in_wei = int(amount_units * (10 ** dec_in))
 
             # 2. Executar o swap de reversão
             tx_hash = self.wallet.send_transaction(
