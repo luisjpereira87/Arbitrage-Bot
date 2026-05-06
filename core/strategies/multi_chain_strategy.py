@@ -233,7 +233,7 @@ class MultiChainStrategy(ArbitrageBase):
 
                 # Passamos o real_units para a entrada para garantir hedge perfeito
                 await self.execute_entry_sequence(
-                    watched_pair, ready_balance, dex_price, int(dex_fee),
+                    watched_pair, ready_balance, dex_price, price_hl, int(dex_fee),
                     pool_addr, direction
                 )
                 return True
@@ -287,7 +287,7 @@ class MultiChainStrategy(ArbitrageBase):
             logging.error(f"❌ Erro crítico no adjust_balance: {e}")
             return usdc_balance
 
-    async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc: float, dex_price: float,
+    async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc: float, dex_price: float, hl_price: float,
                                      dex_fee: int, selected_pool: str, direction: bool):
 
         # 1. Validação inicial de segurança
@@ -351,16 +351,39 @@ class MultiChainStrategy(ArbitrageBase):
 
         # 5. Validação do Hedge e Rollback
         if hl_result:
-            logging.info(f"🔒 Hedge confirmado na HL a ${hl_result.price}")
+            # 1. Definição do Preço Seguro (Ordem de prioridade)
+            price_to_use = hl_result.price or hl_price
+
+            # 2. Definição do Valor Seguro (Balanço em USD)
+            # Se a HL falhar, usamos o valor da DEX menos uma margem de erro (ex: 0.40 USD)
+            dex_value = float(actual_trade_value_usdc)
+            safety_margin = 0.40
+
+            if hl_result.price and hl_result.amount:
+                # Cenário Ideal: Temos dados reais da HL
+                actual_hl_cost_usd = float(hl_result.price * hl_result.amount)
+                actual_hl_units = float(hl_result.amount)
+            else:
+                # Cenário de Falha: Assumimos o valor da DEX com margem de segurança
+                logging.warning(f"⚠️ Falha nos dados da HL. Assumindo valor DEX - ${safety_margin}")
+                actual_hl_cost_usd = dex_value - safety_margin
+                # Estimamos as unidades com base nesse valor seguro
+                actual_hl_units = actual_hl_cost_usd / price_to_use
+
+            # 3. Cálculo do Total e criação da Posição
+            actual_total_value_usd = dex_value + actual_hl_cost_usd
+
+            logging.info(f"🔒 Hedge confirmado na HL a ${price_to_use}")
 
             new_pos = ActivePosition(
                 status="OPEN",
                 symbol=f"{pair.symbol_b}/USDC",
                 units_dex=float(real_units),
-                initial_balance_dex_usd=actual_trade_value_usdc,
-                initial_balance_hl_usd=actual_trade_value_usdc,
-                total_initial_usd=actual_trade_value_usdc * 2,
-                entry_price_hl=hl_result.price,
+                initial_balance_dex_usd=dex_value,
+                initial_balance_hl_usd=actual_hl_cost_usd,
+                total_initial_usd=actual_total_value_usd,
+                entry_price_hl=float(price_to_use),  # Guardamos o preço seguro
+                entry_price_dex=float(dex_price),
                 timestamp=datetime.now().isoformat()
             )
 
