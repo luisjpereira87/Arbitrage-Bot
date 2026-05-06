@@ -156,16 +156,15 @@ class MultiChainStrategy(ArbitrageBase):
                 continue
 
             # O manage_orders agora decide se fecha o que existe ou abre o que falta
-            await self.manage_orders(opportunity, pair, active_tokens, inventory, usdc_balance)
+            await self.manage_orders(opportunity, pair, usdc_balance, price_hl.bid)
 
         return True
 
-    async def manage_orders(self, opportunity: DexOpportunity, watched_pair: WatchedPair, active_tokens: dict,
-                            inventory: dict,
-                            usdc_balance: float):
+    async def manage_orders(self, opportunity: DexOpportunity, watched_pair: WatchedPair, usdc_balance: float,
+                            price_hl: float):
 
         dex_price = opportunity.price_dex
-        hl_price = opportunity.price_hl
+        # hl_price = opportunity.price_hl
         profit = opportunity.profit  # Este é o lucro ESTIMADO para entrada
         pool_addr = opportunity.pool_addr
         direction = opportunity.direction
@@ -188,8 +187,8 @@ class MultiChainStrategy(ArbitrageBase):
         if self.active_position and self.active_position.status == "OPEN":
             if symbol_b in self.active_position.symbol:
                 # 1. Calcular Lucro Real Absoluto (Baseado no JSON)
-
-                current_profit_real = TradePosition.check_exit_profitability(self.active_position, dex_price, hl_price)
+                print("PRICE DEX", dex_price, "PRICE hl", price_hl)
+                current_profit_real = TradePosition.check_exit_profitability(self.active_position, dex_price, price_hl)
 
                 # 2. Validar Saída (Nova Assinatura: foco no lucro real)
                 # Nota: amount_usdc não é usado na saída, passamos None ou 0
