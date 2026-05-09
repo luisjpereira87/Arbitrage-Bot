@@ -14,7 +14,7 @@ from core.dclass.signal_enum import Signal
 from core.dclass.watched_pair_dclass import WatchedPair
 from core.pools.pool_finder import PoolFinder
 from core.strategies.arbitrage_base import ArbitrageBase
-from core.utils.paths import TradePosition
+from core.utils.trade_position_multi import TradePositionMulti
 from core.web3.wallet_base import WalletBase
 
 
@@ -24,18 +24,14 @@ class MultiChainStrategy(ArbitrageBase):
         super().__init__(web3_manager, properties.CONFIG)
         self.watched_pairs = None
         self.finder = pool_finder
-        # self.min_profit = 0.20  # Minimum $ profit to trigger
         self.wallet = wallet
         self.capital = wallet.get_usdc_balance()
         self.config = properties.CONFIG
-        # self.min_entry_spread = 2.5
         self.min_usdc_to_trade = 10.0
         self.min_exit_spread = -1.5
-        # self.min_amount = 10
-        # self.active_positions = {}
-        # self.test = True
+        self.max_slots = 2
 
-        self.active_position = TradePosition.get_position()
+        # self.active_position = TradePosition.get_position()
 
         self.hl = ccxt.hyperliquid({
             "walletAddress": properties.WALLET_ADDRESS_HL,
@@ -50,6 +46,8 @@ class MultiChainStrategy(ArbitrageBase):
 
         self.pool_blacklist: dict = {}  # { "pool_address": timestamp_liberacao }
         self.blacklist_duration = 300  # 5 minutos de "castigo"
+
+        self.active_positions = TradePositionMulti.load_all_positions()
 
         self.init_cache()
 
@@ -104,23 +102,44 @@ class MultiChainStrategy(ArbitrageBase):
 
         # 1. Obter inventário e saldos
         inventory = await self.get_all_balances()
-        usdc_dex = inventory.get("USDC", 0.0)
-        hl_equity = inventory.get("hl", 0.0)
+        dex_balance_usdc = inventory.get("USDC", 0.0)
+        hl_balance_usdc = inventory.get("hl", 0.0)
+
+        """
+        total_balance_usdc = dex_balance_usdc + hl_balance_usdc
 
         # Capital disponível para NOVAS entradas
-        usdc_balance = min(usdc_dex, hl_equity)
+        usdc_balance_to_trade = min(dex_balance_usdc, hl_balance_usdc)
+        """
+
+        # --- AJUSTE DE SALDO PARA MULTI-SLOT ---
+        # Somamos o que já está investido na DEX (via JSONs) para saber o capital total da estratégia
+        capital_investido_dex = sum(pos.initial_balance_dex_usd for pos in self.active_positions.values())
+        # O capital total é o que temos livre + o que já está alocado na ponta DEX
+        # (Não somamos a ponta HL porque o saldo da HL já considera a margem isolada)
+        total_strategy_capital = dex_balance_usdc + capital_investido_dex
+
+        # Definimos quanto cada slot DEVE ter
+        target_per_slot = total_strategy_capital / self.max_slots
+
+        # O saldo disponível para este ciclo é o menor entre o "teórico do slot" e o que temos na carteira
+        usdc_balance_to_trade = min(target_per_slot, dex_balance_usdc, hl_balance_usdc)
+        # ----------------------------------------
+
+        total_balance_usdc = dex_balance_usdc + hl_balance_usdc
 
         # 2. Identificar "Batatas Quentes" (Ativos já em carteira)
         active_tokens = {sym: units for sym, units in inventory.items()
                          if sym not in ["USDC", "hl"] and units > 0.00001}
 
-        logging.info(f"📊 [ESTADO] DEX: {usdc_dex:.2f} USDC | HL: {hl_equity:.2f} USDC | Tokens: {active_tokens}")
+        logging.info(
+            f"📊 [ESTADO] DEX: {dex_balance_usdc:.2f} USDC | HL: {hl_balance_usdc:.2f} USDC | Tokens: {active_tokens}")
 
         # 3. VERIFICAÇÃO LÓGICA:
         # Se não temos tokens para gerir E o saldo é baixo, então paramos.
-        if not active_tokens and usdc_balance < self.min_usdc_to_trade:
+        if not active_tokens and usdc_balance_to_trade < self.min_usdc_to_trade:
             logging.info(
-                f"⏳ Modo espera: Saldo insuficiente para novas entradas (${usdc_balance:.2f})."
+                f"⏳ Modo espera: Saldo insuficiente para novas entradas (${usdc_balance_to_trade:.2f})."
             )
             return False
 
@@ -129,7 +148,6 @@ class MultiChainStrategy(ArbitrageBase):
 
         # 4. Se chegámos aqui, ou temos saldo ou temos posições para gerir!
         eth_price = all_prices_hl['ETH/USDC:USDC'].bid
-        # eth_price = await self.exchange.get_entry_price("ETH/USDC:USDC")  # Usei get_prices em vez de entry_price
         gas_cost_usdc = self.wallet.get_gas_cost_usd(eth_price)
 
         # 5. Recolher preços em Batch
@@ -141,41 +159,51 @@ class MultiChainStrategy(ArbitrageBase):
         # 6. LOOP DE DECISÃO
         for pair in self.watched_pairs:
 
+            symbol_base = pair.symbol_b  # Ex: "ARB"
+            active_position = None
+            if symbol_base in self.active_positions:
+                # Passas a posição específica para o manage_orders
+                active_position = self.active_positions[symbol_base]
+            elif len(self.active_positions) < self.max_slots:
+                active_position = None
+
+            """
             if self.active_position is not None:
                 # Extrai o símbolo base do JSON (ex: "ARB/USDC" -> "ARB")
                 pos_base_symbol = self.active_position.symbol.split('/')[0]
                 if pair.symbol_b != pos_base_symbol:
                     continue
-
+            """
             price_data = all_prices_hl[pair.hl_pair]
             if not price_data or price_data.bid is None:
                 logging.warning(f"⚠️ Sem dados para {pair.hl_pair}, saltando...")
                 continue
+
             hl_price = price_data.bid
 
-            """
-            if price_hl and hasattr(price_hl, 'bid') and price_hl.bid is not None:
-                hl_price = price_hl.bid
-            else:
-                logging.warning("⚠️ Falha ao obter bid da HL, saltando verificação...")
-                continue
-            """
             opportunity = self.find_cross_dex_spread(
                 pair.addr_a, pair.addr_b,
                 pair.symbol_a, pair.symbol_b,
                 hl_price, pair.pools_map,
-                current_prices, usdc_balance, gas_cost_usdc
+                current_prices, usdc_balance_to_trade, gas_cost_usdc
             )
 
             if not opportunity:
                 continue
 
             # O manage_orders agora decide se fecha o que existe ou abre o que falta
-            await self.manage_orders(opportunity, pair, usdc_balance, hl_price)
+            success = await self.manage_orders(opportunity, active_position, pair, usdc_balance_to_trade,
+                                               total_balance_usdc,
+                                               hl_price)
+            if success:
+                logging.info(f"✅ Executar trasação para {pair.symbol_b}. Parando ciclo para atualizar saldos.")
+                return True  # Sai do analyze_all_pairs imediatamente
 
         return True
 
-    async def manage_orders(self, opportunity: DexOpportunity, watched_pair: WatchedPair, usdc_balance: float,
+    async def manage_orders(self, opportunity: DexOpportunity, active_position: ActivePosition,
+                            watched_pair: WatchedPair, usdc_balance_to_trade: float,
+                            total_balance_usdc: float,
                             price_hl: float):
 
         dex_price = opportunity.price_dex
@@ -197,29 +225,30 @@ class MultiChainStrategy(ArbitrageBase):
 
         # CENÁRIO A: Monitorização de Posição Aberta (Lido via JSON)
 
-        if self.active_position and self.active_position.status == "OPEN":
-            if symbol_b in self.active_position.symbol:
+        if active_position and active_position.status == "OPEN":
+            if symbol_b in active_position.symbol:
                 # 1. Calcular Lucro Real Absoluto (Baseado no JSON)
-                current_profit_real = TradePosition.check_exit_profitability(self.active_position, dex_price, price_hl)
+                current_profit_real = TradePositionMulti.check_exit_profitability(active_position, dex_price, price_hl)
 
                 # 2. Validar Saída (Nova Assinatura: foco no lucro real)
                 # Nota: amount_usdc não é usado na saída, passamos None ou 0
                 check_v = self.check_viability_dynamic(
+                    watched_pair=watched_pair,
                     net_profit=current_profit_real,
                     spread_percent=spread_percent,
-                    amount_usdc=0,
+                    amount_usdc=active_position.total_balance_before_usd,
                     is_exit=True
                 )
 
                 if check_v:
                     logging.info(f"💰 META ATINGIDA: Fechando {symbol_b} | Lucro Real: ${current_profit_real:.4f}")
                     # Importante: units_dex vem do JSON para garantir que vendemos TUDO o que compramos
-                    await self.execute_exit_sequence(watched_pair, self.active_position.units_dex, pool_addr, direction,
+                    await self.execute_exit_sequence(watched_pair, active_position.units_dex, pool_addr, direction,
                                                      dex_price, int(dex_fee))
                     return True
                 else:
                     logging.info(
-                        f"JSON INFO: {self.active_position}")
+                        f"JSON INFO: {active_position}")
 
                     lucro_seguro = current_profit_real if current_profit_real is not None else 0.0
                     # O log agora mostra quanto falta para o teu alvo de $0.20
@@ -229,43 +258,44 @@ class MultiChainStrategy(ArbitrageBase):
             else:
                 # Se for outro par (ex: AAVE), ignora a monitorização e não tenta abrir nada
                 logging.info(
-                    f"⏳ Já existe uma posição aberta em {self.active_position.symbol}. Ignorando {symbol_b}...")
+                    f"⏳ Já existe uma posição aberta em {active_position.symbol}. Ignorando {symbol_b}...")
                 return False
 
         # CENÁRIO B: Procurar Novas Entradas (Se não houver posição no JSON)
-        elif not self.active_position:
+        elif not active_position:
             # Validar Entrada (Ainda usamos spread e lucro estimado)
             check_v = self.check_viability_dynamic(
+                watched_pair=watched_pair,
                 net_profit=profit,
                 spread_percent=spread_percent,
-                amount_usdc=usdc_balance,
+                amount_usdc=usdc_balance_to_trade,
                 is_exit=False
             )
 
             if check_v:
                 logging.info(f"🎯 Oportunidade Validada: {spread_percent:.2f}% em {symbol_b}. Executando...")
-                ready_balance = self.adjust_balance(usdc_balance, dex_price, hl_pair, symbol_b)
+                adjust_balance = self.adjust_balance(usdc_balance_to_trade, dex_price, hl_pair, symbol_b)
 
                 # Passamos o real_units para a entrada para garantir hedge perfeito
                 await self.execute_entry_sequence(
-                    watched_pair, ready_balance, dex_price, price_hl, int(dex_fee),
+                    watched_pair, adjust_balance, total_balance_usdc, dex_price, price_hl, int(dex_fee),
                     pool_addr, direction
                 )
                 return True
 
         return False
 
-    def adjust_balance(self, usdc_balance: float, dex_price: float, hl_pair: str, symbol_b: str) -> float:
+    def adjust_balance(self, usdc_balance_to_trade: float, dex_price: float, hl_pair: str, symbol_b: str) -> float:
         try:
             # 1. Garantir que os mercados estão carregados no CCXT
             if hl_pair not in self.hl.markets:
                 logging.warning(f"⚠️ Par {hl_pair} não carregado. A tentar usar valor bruto.")
-                return usdc_balance
+                return usdc_balance_to_trade
 
             market = self.hl.market(hl_pair)
 
             # 2. Calcular quantidade bruta de tokens
-            raw_qty = usdc_balance / dex_price
+            raw_qty = usdc_balance_to_trade / dex_price
 
             # 3. Obter a precisão (número de casas decimais permitidas)
             # Na HL, isto vem geralmente em market['precision']['amount']
@@ -282,40 +312,42 @@ class MultiChainStrategy(ArbitrageBase):
             # 6. Calcular o custo em USD para comprar EXATAMENTE essa quantidade
             # Adicionamos 0.3% de margem para cobrir a taxa da DEX (0.05% a 0.3%) e slippage
             # Assim garantimos que o contrato tem USDC suficiente para completar o swap
-            balance_ajustado = clean_qty * dex_price * 1.003
+            adjust_balance = clean_qty * dex_price * 1.003
 
-            if balance_ajustado > usdc_balance:
+            if adjust_balance > usdc_balance_to_trade:
                 logging.warning(f"⚠️ Ajuste excedeu balance original. Recalculando...")
                 # Se a margem de 0.3% estourou o teto, reduzimos uma unidade de precisão
                 step = 1 / factor
                 clean_qty -= step
-                balance_ajustado = clean_qty * dex_price * 1.003
+                adjust_balance = clean_qty * dex_price * 1.003
 
             logging.info(
                 f"🎯 [PRECISÃO {symbol_b}] Qtd: {clean_qty} | "
-                f"USD Original: ${usdc_balance:.2f} | USD Ajustado: ${balance_ajustado:.4f}"
+                f"USD Original: ${usdc_balance_to_trade:.2f} | USD Ajustado: ${adjust_balance:.4f}"
             )
 
-            return balance_ajustado
+            return adjust_balance
 
         except Exception as e:
             logging.error(f"❌ Erro crítico no adjust_balance: {e}")
-            return usdc_balance
+            return usdc_balance_to_trade
 
-    async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc: float, dex_price: float, hl_price: float,
+    async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc_to_trade: float, total_balance_usdc: float,
+                                     dex_price: float,
+                                     hl_price: float,
                                      dex_fee: int, selected_pool: str, direction: bool):
 
         # 1. Validação inicial de segurança
-        if amount_usdc < 11.0:
-            logging.warning(f"🚫 Abortando: Valor ${amount_usdc:.2f} inferior ao mínimo CEX.")
+        if amount_usdc_to_trade < 11.0:
+            logging.warning(f"🚫 Abortando: Valor ${amount_usdc_to_trade:.2f} inferior ao mínimo CEX.")
             return False
 
         # 2. Check de Liquidez e Obtenção de Unidades REAIS
-        expected_units = amount_usdc / dex_price
+        expected_units = amount_usdc_to_trade / dex_price
         viable, real_units = self.wallet.is_swap_viable(
             token_in=pair.addr_a,
             token_out=pair.addr_b,
-            amount_in_usd=amount_usdc,
+            amount_in_usd=amount_usdc_to_trade,
             expected_out_units=expected_units,
             fee=dex_fee,
             tolerance=0.005
@@ -392,18 +424,20 @@ class MultiChainStrategy(ArbitrageBase):
 
             new_pos = ActivePosition(
                 status="OPEN",
-                symbol=f"{pair.symbol_b}/USDC",
+                symbol=pair.hl_pair,
                 units_dex=float(real_units),
                 initial_balance_dex_usd=dex_value,
                 initial_balance_hl_usd=actual_hl_cost_usd,
-                total_initial_usd=actual_total_value_usd,
+                total_balance_before_usd=total_balance_usdc,
+                total_balance_after_usd=actual_total_value_usd,
                 entry_price_hl=float(price_to_use),  # Guardamos o preço seguro
                 entry_price_dex=float(dex_price),
                 timestamp=datetime.now().isoformat()
             )
 
-            TradePosition.save_position(new_pos)
-            self.active_position = new_pos
+            TradePositionMulti.save_position(new_pos)
+            # self.active_position = new_pos
+            self.active_positions[pair.hl_pair] = new_pos
             return True
         else:
             self.force_exit_to_usdc(pair.addr_b, pair.addr_a, real_units, selected_pool, not direction)
@@ -520,8 +554,8 @@ class MultiChainStrategy(ArbitrageBase):
         # 4. Finalização e Limpeza de Estado
         if tx_hash and hl_success:
             logging.info(f"💵 CICLO CONCLUÍDO COM SUCESSO! DEX: {tx_hash} | HL: OK")
-            TradePosition.clear_position()
-            self.active_position = None
+            TradePositionMulti.clear_position(pair.hl_pair)
+            self.active_positions.pop(pair.hl_pair, None)
             return True
 
         return False
@@ -614,120 +648,55 @@ class MultiChainStrategy(ArbitrageBase):
         # Só retorna depois de verificar TODAS as pools do map
         return best_opportunity
 
-    """
-    def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm, is_exit=False):
-        # 1. ROI Alvo (Ajustado)
-        # Na entrada, buscamos 0.1% de lucro real.
-        # Na saída, podemos ser mais flexíveis para não ficar "preso" no trade.
-        target_roi = 0.0005 if is_exit else 0.001
-        min_profit_required = amount_usdc * target_roi
-
-        # 2. Spread de Segurança Dinâmico
-        fee_dex_percent = fee_dex_ppm / 1_000_000
-        fee_hl_percent = 0.00035
-
-        # Na entrada (DEX->HL), o buffer protege contra slippage na compra.
-        # Na saída (DEX<-HL), o buffer protege contra slippage na venda.
-        buffer_seguranca = 0.05 if is_exit else 0.15
-
-        min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
-
-        # LOG de Decisão (Útil para debug no Railway)
-        logging.info(f"--- 🧠 Análise Dinâmica ---")
-        logging.info(f"Lucro: ${net_profit:.4f} (Min Req: ${min_profit_required:.4f})")
-        logging.info(f"Spread: {spread_percent:.2f}% (Min Req: {min_spread_required:.2f}%)")
-
-        # 3. Lógica Especial de Saída (Spread Negativo)
-        # Se o spread for negativo (DEX mais cara que HL), a arbitragem inverteu totalmente.
-        # Isto é um sinal fortíssimo de saída, mesmo que o lucro seja baixo.
-        if is_exit and spread_percent <= self.min_exit_spread and net_profit > 0.05:
-            logging.info(f"🚨 Saída Estratégica: Spread Reverso detectado ({spread_percent}%)")
-            return True, 0, 0
-
-        # Decisão
-        success = net_profit >= min_profit_required and spread_percent >= (0 if is_exit else min_spread_required)
-
-        return success, min_profit_required, min_spread_required
-    """
-
-    """
-    def check_viability_dynamic(self, net_profit, spread_percent, amount_usdc, fee_dex_ppm, is_exit=False):
-        # --- 1. CONFIGURAÇÃO DE TAXAS ---
-        fee_dex_percent = fee_dex_ppm / 1_000_000
-        fee_hl_percent = 0.00035
-
-        # --- 2. LÓGICA DE ENTRADA ---
-        if not is_exit:
-            min_profit_required = amount_usdc * 0.001  # 0.1% ROI
-            buffer_seguranca = 0.15
-            min_spread_required = (fee_dex_percent * 100) + (fee_hl_percent * 100) + buffer_seguranca
-
-            success = net_profit >= min_profit_required and spread_percent >= min_spread_required
-
-            logging.info(
-                f"📥 ENTRADA: Lucro ${net_profit:.4f}/${min_profit_required:.4f} | Spread {spread_percent:.2f}%/{min_spread_required:.2f}%")
-            return success, min_profit_required, min_spread_required
-
-        # --- 3. LÓGICA DE SAÍDA (O teu foco agora) ---
-        else:
-            # Definimos um lucro mínimo ABSOLUTO em dólar para cobrir o GAS da saída
-            # Abaixo de $0.15 de lucro bruto, o GAS de ~0.20-0.30 vai deixar-te no prejuízo.
-            min_net_profit_out = 0.20
-
-            # A condição de saída foca no Teu Alvo de Spread (-1.5%)
-            # E garante que o lucro bruto paga as contas.
-            target_reached = spread_percent <= self.min_exit_spread
-            profit_ok = net_profit >= min_net_profit_out
-
-            if target_reached and profit_ok:
-                logging.info(
-                    f"🚨 SAÍDA AUTORIZADA: Spread {spread_percent}% (Alvo: {self.min_exit_spread}%) | Lucro: ${net_profit:.4f}")
-                return True, min_net_profit_out, self.min_exit_spread
-
-            # Log de espera para não encher o console, mas manter-te informado
-            if target_reached and not profit_ok:
-                logging.warning(
-                    f"⚠️ Alvo de spread atingido ({spread_percent}%), mas lucro ${net_profit:.4f} é insuficiente para cobrir o GAS.")
-
-            return False, min_net_profit_out, self.min_exit_spread
-    """
-
-    def check_viability_dynamic(self, net_profit, amount_usdc, is_exit=False, spread_percent=None):
+    def check_viability_dynamic(self, watched_pair: WatchedPair, net_profit, amount_usdc, is_exit=False,
+                                spread_percent=None):
         """
-        Validação de viabilidade para Entrada e Saída.
-        Agora com logs de Spread restaurados para monitorização total.
+        Validação de viabilidade com metas de 0.5% para entrada e 0.7% para saída.
         """
 
         # --- 1. LÓGICA DE ENTRADA ---
         if not is_exit:
-            min_profit_required = amount_usdc * 0.001  # 0.1% ROI esperado
-            min_spread_required = 0.70  # 0.5% de spread mínimo
+            # Exigimos 0.5% de lucro líquido para abrir a posição
+            min_profit_required = amount_usdc * 0.005
+            min_spread_required = 0.70
 
             success = net_profit >= min_profit_required and spread_percent >= min_spread_required
 
-            # Log detalhado apenas se estivermos perto de entrar ou para debug
-            if spread_percent > 0.10:
-                logging.info(f"🔍 [SCANNER] Spread: {spread_percent:.2f}% | Lucro Est.: ${net_profit:.4f}")
+            if spread_percent > 0.20:
+                gap = min_profit_required - net_profit
+                gap_str = f" | Falta: ${gap:.4f}" if gap > 0 else " | ✅ PRONTO"
+
+                logging.info(
+                    f"🔍 [SCANNER] {watched_pair.symbol_b} | "
+                    f"Spread: {spread_percent:.2f}% | "
+                    f"Lucro Est: ${net_profit:.4f} | "
+                    f"Alvo Min: ${min_profit_required:.4f}"
+                    f"{gap_str}"
+                )
 
             return success
 
         # --- 2. LÓGICA DE SAÍDA ---
         else:
-            min_net_profit_out = 0.50
+            # Definimos a meta de 0.7% sobre o capital total do trade
+            roi_target = 0.007
+            min_net_profit_out = amount_usdc * roi_target if amount_usdc > 0 else 0.50
 
-            # Log consolidado: Lucro Real vs Comportamento do Mercado (Spread)
-            # O spread_percent aqui ajuda-te a ver se a arbitragem está a convergir
-            status_msg = f"💎 [MONITOR] Lucro: ${net_profit:.4f} | Spread: {spread_percent:.2f}%"
+            # Cálculo de progresso para o log
+            progress = (net_profit / min_net_profit_out) * 100 if min_net_profit_out > 0 else 0
+
+            status_icon = "💰" if net_profit > 0 else "⏳"
+            status_msg = (
+                f"{status_icon} [MONITOR] {watched_pair.symbol_b} | "
+                f"Lucro: ${net_profit:.4f}/${min_net_profit_out:.2f} | "
+                f"Progresso: {progress:.1f}% | Spread: {spread_percent:.2f}%"
+            )
 
             if net_profit >= min_net_profit_out:
-                logging.info(f"✅ META ALCANÇADA! {status_msg}. A disparar ordem de saída!")
+                logging.info(f"✅ META ALCANÇADA! {status_msg}")
                 return True
 
-            # Logs de progresso baseados no lucro real
-            if net_profit < 0:
-                logging.info(
-                    f"⏳ Posição em recuperação: {status_msg} (Falta: ${abs(net_profit - min_net_profit_out):.2f})")
-            else:
-                logging.info(f"💰 No verde: {status_msg} (Meta: ${min_net_profit_out})")
+            # Log de monitorização (ajustado para ser mais scannable)
+            logging.info(status_msg)
 
             return False
