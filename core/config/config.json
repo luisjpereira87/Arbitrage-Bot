@@ -200,6 +200,16 @@
       "USDC",
       "PENDLE",
       "PENDLE/USDC:USDC"
+    ],
+    [
+      "USDC",
+      "GMX",
+      "GMX/USDC:USDC"
+    ],
+    [
+      "USDC",
+      "UNI",
+      "UNI/USDC:USDC"
     ]
   ]
 }
