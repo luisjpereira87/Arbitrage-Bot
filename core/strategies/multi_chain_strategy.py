@@ -350,7 +350,7 @@ class MultiChainStrategy(ArbitrageBase):
             amount_in_usd=amount_usdc_to_trade,
             expected_out_units=expected_units,
             fee=dex_fee,
-            tolerance=0.005
+            tolerance=0.001
         )
 
         # CÁLCULO DO VALOR REAL QUE VAI SER EXECUTADO
@@ -495,7 +495,7 @@ class MultiChainStrategy(ArbitrageBase):
             amount_in_usd=units,
             expected_out_units=expected_usdc,
             fee=dex_fee,
-            tolerance=0.015  # 1.5% de tolerância para garantir a saída
+            tolerance=0.003  # 1.5% de tolerância para garantir a saída
         )
 
         if not viable:
@@ -658,7 +658,7 @@ class MultiChainStrategy(ArbitrageBase):
         if not is_exit:
             # Exigimos 0.5% de lucro líquido para abrir a posição
             min_profit_required = amount_usdc * 0.005
-            min_spread_required = 0.70
+            min_spread_required = 1
 
             success = net_profit >= min_profit_required and spread_percent >= min_spread_required
 
