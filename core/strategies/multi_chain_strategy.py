@@ -657,7 +657,7 @@ class MultiChainStrategy(ArbitrageBase):
         # --- 1. LÓGICA DE ENTRADA ---
         if not is_exit:
             # Exigimos 0.5% de lucro líquido para abrir a posição
-            min_profit_required = amount_usdc * 0.005
+            min_profit_required = amount_usdc * 0.008
             min_spread_required = 1
 
             success = net_profit >= min_profit_required and spread_percent >= min_spread_required
@@ -679,7 +679,7 @@ class MultiChainStrategy(ArbitrageBase):
         # --- 2. LÓGICA DE SAÍDA ---
         else:
             # Definimos a meta de 0.7% sobre o capital total do trade
-            roi_target = 0.007
+            roi_target = 0.012
             min_net_profit_out = amount_usdc * roi_target if amount_usdc > 0 else 0.50
 
             # Cálculo de progresso para o log
