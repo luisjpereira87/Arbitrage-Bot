@@ -29,7 +29,7 @@ class MultiChainStrategy(ArbitrageBase):
         self.config = properties.CONFIG
         self.min_usdc_to_trade = 10.0
         self.min_exit_spread = -1.5
-        self.max_slots = 2
+        self.max_slots = 1
 
         # self.active_position = TradePosition.get_position()
 
