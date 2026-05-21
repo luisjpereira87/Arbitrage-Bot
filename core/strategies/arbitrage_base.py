@@ -429,7 +429,8 @@ class ArbitrageBase:
             price_dex = 1 / raw_price_dex
             # price_dex = raw_price_dex
 
-            logging.info(f"Dex: {dex_name}, Pair: {pair.symbol_a}/{pair.symbol_b}, Price: {price_dex}")
+            logging.info(
+                f"Dex: {dex_name}, Pair: {pair.symbol_a}/{pair.symbol_b}, Price Dex: {price_dex}, Price HL: {price_hl}")
 
             # Determinar custo de gás baseado na rede
             current_gas = 0.05 if pair.chain == Chains.SOLANA else gas_cost_usdc
