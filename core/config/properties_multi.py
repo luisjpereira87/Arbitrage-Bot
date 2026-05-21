@@ -18,6 +18,8 @@ class PropertiesMulti(PropertiesBase):
     WALLET_ADDRESS_HL = os.getenv("WALLET_ADDRESS_HL")
     WALLET_ADDRESS = os.getenv("WALLET_ADDRESS_DEX")
 
+    PRIVATE_KEY_WALLET_SOLANA = os.getenv("PRIVATE_KEY_WALLET_SOLANA")
+
     CONTRACT_ABI = [
         {
             "inputs": [

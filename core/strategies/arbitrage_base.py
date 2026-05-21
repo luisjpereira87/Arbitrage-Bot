@@ -1,9 +1,16 @@
+import asyncio
 import itertools
+import logging
+import socket
 import time
 
+import aiohttp
 from eth_abi import decode
 
+from core.dclass.chains_enum import Chains
 from core.dclass.config_json import Config
+from core.dclass.dex_opportunity_dclass import DexOpportunity
+from core.dclass.watched_pair_dclass import WatchedPair
 
 
 class ArbitrageBase:
@@ -40,6 +47,10 @@ class ArbitrageBase:
 
         self.low_liquidity_cache = {}  # {addr: timestamp_da_exclusao}
         self.LIQUIDITY_TTL = 3600  # Ignorar por 1 hora (3600 segundos)
+
+        self.session = None
+        self.pool_blacklist = {}
+        self.last_batch_results = {}
 
     @property
     def w3(self):
@@ -181,9 +192,9 @@ class ArbitrageBase:
         price_base = ((sqrt_price_x96 / (2 ** 96)) ** 2) * (10 ** data['d0'] / 10 ** data['d1'])
 
         if token_in.lower() == data['t0']:
-            return price_base, True, data['fee']  # zeroForOne = True
+            return price_base, True, data['fee'], None  # zeroForOne = True
         else:
-            return 1 / price_base, False, data['fee']  # zeroForOne = False
+            return 1 / price_base, False, data['fee'], None  # zeroForOne = False
 
     def get_quotes_batch(self, pool_addresses):
         MULTICALL_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
@@ -272,6 +283,7 @@ class ArbitrageBase:
 
                     price = decode(['uint160'], res_price[1][:32])[0]
                     decoded_prices[pool_addr] = price
+                    self.last_batch_results = decoded_prices
 
             return decoded_prices
 
@@ -281,3 +293,168 @@ class ArbitrageBase:
                 return self.get_quotes_batch(pool_addresses)
             print(f"❌ Erro crítico no envio: {e}")
             return {}
+
+    # --- 1. MÉTODOS DE CÁLCULO CENTRALIZADOS ---
+
+    def calculate_net_metrics(self, price_hl, price_dex, amount_usdc, fee_ppm, gas_usdc):
+        """
+        A 'Fórmula Única' para ROI e Spread.
+        fee_ppm: fee da DEX em partes por milhão (ex: 3000 para 0.3%)
+        """
+        fee_dex_percent = fee_ppm / 1_000_000
+
+        # 1. Quantos tokens compro na DEX com o capital disponível
+        tokens_bought = (amount_usdc * (1 - fee_dex_percent)) / price_dex
+
+        # 2. Valor bruto da venda na Hyperliquid (já com taxas de lá: 0.035% * 2)
+        total_recebido_hl = (tokens_bought * price_hl) * (1 - 0.00070)
+
+        # 3. Custos adicionais
+        custo_reverter_dex = (tokens_bought * price_dex) * fee_dex_percent
+        total_gas = gas_usdc * 2  # Abertura + Fecho (será 0 na Solana)
+
+        # 4. LUCRO REAL LÍQUIDO
+        net_profit = total_recebido_hl - amount_usdc - custo_reverter_dex - total_gas
+        spread_percent = ((price_hl / price_dex) - 1) * 100
+
+        return net_profit, spread_percent
+
+    # --- 2. CONSULTA DE PREÇOS AGNÓSTICA ---
+
+    async def fetch_dex_price(self, pair: WatchedPair, pool_addr, usdc_balance_to_trade: float):
+        """
+        Decide se consulta o cache do Multicall (ARB) ou a API da Jupiter (SOL).
+        """
+        if pair.chain == Chains.SOLANA:
+            return await self._get_solana_jupiter_quote(pair, usdc_balance_to_trade)
+        else:
+            # Consulta o cache preenchido pelo get_quotes_batch
+            sqrt_price = self.last_batch_results.get(pool_addr.lower())
+            if sqrt_price:
+                return self._calculate_quote_local(pool_addr, pair.addr_a, pair.addr_b, sqrt_price)
+        return None
+
+    async def _get_solana_jupiter_quote(self, pair: WatchedPair, usdc_balance_to_trade: float):
+        """
+        Consulta a Jupiter API com proteção de DNS, ritmo controlado e lista de Failover.
+        """
+        if usdc_balance_to_trade <= 0:
+            return None
+
+        # 1. Lista de Endpoints da Jupiter por ordem de preferência
+        jupiter_urls = [
+            "https://public.jupiterapi.com/quote",  # Principal (Alta Performance)
+            "https://quote-api.jup.ag/v6/quote"  # Reserva (Oficial)
+        ]
+
+        # 2. Controlador Estático de Ritmo (A tua barreira de 400ms)
+        if not hasattr(self, 'last_jup_call'):
+            self.last_jup_call = 0.0
+
+        agora = time.time()
+        tempo_decorrido = agora - self.last_jup_call
+        if tempo_decorrido < 0.4:
+            await asyncio.sleep(0.4 - tempo_decorrido)
+        self.last_jup_call = time.time()
+
+        # 3. Garantir sessão HTTP
+        if self.session is None or self.session.closed:
+            # Mantemos o teu conector IPv4 com cache para evitar problemas de rede
+            connector = aiohttp.TCPConnector(family=socket.AF_INET, ttl_dns_cache=300)
+            self.session = aiohttp.ClientSession(connector=connector)
+
+        amount_in_base = int(usdc_balance_to_trade * (10 ** pair.decimal_a))
+        params = {
+            "inputMint": pair.addr_a,
+            "outputMint": pair.addr_b,
+            "amount": str(amount_in_base),
+            "slippageBps": 10,
+            "restrictIntermediateTokens": "true"
+        }
+        headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+
+        # 4. Loop de Failover: Percorre as URLs se houver falha
+        for url in jupiter_urls:
+            try:
+                async with self.session.get(url, params=params, headers=headers, timeout=4) as resp:
+
+                    # Se uma URL der Rate Limit, salta imediatamente para a próxima sem esperar!
+                    if resp.status == 429:
+                        logging.warning(f"⚠️ Rate Limit (429) na URL: {url}. A tentar rota alternativa...")
+                        continue
+
+                    if resp.status == 200:
+                        data = await resp.json()
+                        out_raw = int(data['outAmount'])
+                        amount_out_human = out_raw / (10 ** pair.decimal_b)
+                        price_dex = amount_out_human / usdc_balance_to_trade
+
+                        return price_dex, True, 1000, data
+
+                    else:
+                        # Se der outro erro HTTP (ex: 500, 502), regista e testa a próxima URL
+                        logging.warning(f"⚠️ URL {url} devolveu status {resp.status}. Saltando para alternativa...")
+                        continue
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                # Captura timeouts ou quedas de DNS específicas desta URL
+                logging.warning(f"🌐 Falha de conexão na URL {url}: {type(e).__name__}. A tentar failover...")
+                continue
+
+        # Se o loop terminar e nenhuma URL funcionar
+        logging.error("❌ Todas as URLs da Jupiter falharam neste ciclo.")
+        return None
+
+    # --- 3. O NOVO LOCALIZADOR DE OPORTUNIDADES (Refatorado do teu original) ---
+
+    async def find_best_dex_opportunity(self, pair: WatchedPair, price_hl: float, usdc_balance_to_trade: float,
+                                        gas_cost_usdc: float):
+        best_opportunity = None
+
+        # Filtro inicial de blacklist por par/pool
+        for dex_name, pool_addr in pair.pools_map.items():
+            p_addr_l = pool_addr.lower()
+            if p_addr_l in self.pool_blacklist:
+                if time.time() < self.pool_blacklist[p_addr_l]:
+                    continue
+                else:
+                    del self.pool_blacklist[p_addr_l]
+
+            # Obter cotação (Agnóstico)
+            quote = await self.fetch_dex_price(pair, p_addr_l, usdc_balance_to_trade)
+
+            if not quote: continue
+
+            raw_price_dex, direction, fee_dex_ppm, data_quote = quote
+            price_dex = 1 / raw_price_dex
+            # price_dex = raw_price_dex
+
+            logging.info(f"Dex: {dex_name}, Pair: {pair.symbol_a}/{pair.symbol_b}, Price: {price_dex}")
+
+            # Determinar custo de gás baseado na rede
+            current_gas = 0.05 if pair.chain == Chains.SOLANA else gas_cost_usdc
+
+            # Cálculo de Métricas Centralizado
+            net_profit, spread_percent = self.calculate_net_metrics(
+                price_hl, price_dex, usdc_balance_to_trade, fee_dex_ppm, current_gas
+            )
+
+            # Criar objeto de oportunidade (DexOpportunity)
+            current_opp = DexOpportunity(
+                chain=pair.chain,
+                strategy='MULTI_CHAIN',
+                profit=net_profit,
+                spread=spread_percent,
+                symbol=pair.symbol_b,
+                price_dex=price_dex,
+                price_hl=price_hl,
+                pool_addr=pool_addr,
+                dex_name=dex_name,
+                dex_fee=fee_dex_ppm,
+                direction=direction,
+                data_quote=data_quote
+            )
+
+            if best_opportunity is None or current_opp.profit > best_opportunity.profit:
+                best_opportunity = current_opp
+        return best_opportunity

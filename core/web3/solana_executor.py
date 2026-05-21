@@ -1,0 +1,246 @@
+import asyncio
+import base64
+import logging
+from typing import Optional
+
+import aiohttp
+from solana.rpc.commitment import Commitment
+from solana.rpc.types import TxOpts, TokenAccountOpts
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey
+from solders.transaction import VersionedTransaction
+
+from core.config.properties_base import PropertiesBase
+from core.config.properties_multi import PropertiesMulti
+from core.web3.solana_manager import SolanaManager
+
+
+class SolanaExecutor():
+    def __init__(self, solana_manager: SolanaManager, properties: PropertiesBase):
+        self.solana_manager = solana_manager
+
+        if properties.PRIVATE_KEY_WALLET_SOLANA is None:
+            return
+
+        self.wallet = Keypair.from_base58_string(properties.PRIVATE_KEY_WALLET_SOLANA)
+        self.config = properties.CONFIG
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.priority_fee = 50000  # Lamports (~$0.01)
+
+    @property
+    def w3(self):
+        """Acesso dinâmico ao RPC ativo no Manager"""
+        return self.solana_manager.solana
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        # Cria a sessão apenas quando for necessária, já dentro do ambiente assíncrono
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        return self.session
+
+    async def get_token_balance(self, token_address: str) -> int:
+        try:
+            if token_address == "So11111111111111111111111111111111111111112":
+                res_sol = await self.solana_manager.solana.get_balance(self.wallet.pubkey())
+                return res_sol.value
+            else:
+                pubkey_token = Pubkey.from_string(token_address)
+                opts = TokenAccountOpts(mint=pubkey_token)
+
+                res_token = await  self.solana_manager.solana.get_token_accounts_by_owner(
+                    self.wallet.pubkey(),
+                    opts=opts,
+                    commitment=Commitment("processed")
+                )
+
+                if not res_token.value:
+                    return 0
+
+                # Pegamos nos dados brutos (account.data)
+                account_data = res_token.value[0].account.data
+
+                # Se o RPC não parseou, account_data será tratado como bytes
+                # O layout de um SPL Token Account é fixo na Solana:
+                # Bytes 0-32: Mint
+                # Bytes 32-64: Owner
+                # Bytes 64-72: Amount (u64, Little Endian) <--- É ISTO QUE QUEREMOS
+
+                import struct
+                raw_bytes = bytes(account_data)
+
+                if len(raw_bytes) >= 72:
+                    # Extraímos os 8 bytes do offset 64 ao 72
+                    amount = struct.unpack("<Q", raw_bytes[64:72])[0]
+                    return int(amount)
+
+                return 0
+
+        except Exception as e:
+            if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+                self.solana_manager.rotate_rpc()
+                return await self.get_token_balance(token_address)  # Tenta de novo com novo RPC
+            logging.error(f"❌ Erro ao ler saldo na Solana: {e}")
+            return 0
+
+    async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
+                               amount_usd: float, quote_data: dict = None):
+
+        # 1. TRATAMENTO DO VALOR
+        val_in_raw = int(amount_usd)
+
+        # --- DEBUG/REPORTE ESTILO MAINNET ---
+        t_address = tokens_list[0]
+        w_address = str(self.wallet.pubkey())
+
+        contract_balance = await self.get_token_balance(t_address)
+
+        print(f"\n--- 🕵️ RELATÓRIO DE EXECUÇÃO SOLANA ---")
+        print(f"📍 Wallet: {w_address}")
+        print(f"🪙 Token: {t_address}")
+        print(f"🔢 Saldo Bruto: {contract_balance}")
+        print(f"💰 Saldo Formatado: {contract_balance / 10 ** 6:.4f}")
+        print(f"📉 Pedido p/ Swap: {val_in_raw}")
+
+        if contract_balance < val_in_raw:
+            diff = val_in_raw - contract_balance
+            if diff < 100000:
+                print(f"⚠️ Diferença mínima ({diff}). Ajustando para saldo total.")
+                val_in_raw = contract_balance
+            else:
+                print(f"❌ ERRO: Saldo insuficiente real! ({contract_balance} < {val_in_raw})")
+                return None
+        print(f"---------------------------------\n")
+
+        try:
+            if not quote_data:
+                print("❌ ERRO: quote_data da Jupiter é necessário para execução na Solana.")
+                return None
+
+            # 2. Construção da Transação via Jupiter
+            swap_url = "https://quote-api.jup.ag/v6/swap"
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": w_address,
+                "wrapAndUnwrapSol": True,
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": self.priority_fee
+            }
+
+            session = self._get_session()
+            async with session.post(swap_url, json=payload) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ Falha ao construir swap Jupiter: {await resp.text()}")
+                    return None
+                swap_res = await resp.json()
+                tx_base64 = swap_res['swapTransaction']
+
+            # 3. Assinatura (Corrigido para passar bytes puros)
+            raw_tx = base64.b64decode(tx_base64)
+            v_tx = VersionedTransaction.from_bytes(raw_tx)
+
+            # Passamos a mensagem convertida em bytes puros
+            signature = self.wallet.sign_message(bytes(v_tx.message))
+            v_tx.signatures = [signature]
+
+            # 4. Envio
+            opts = TxOpts(skip_preflight=True, preflight_commitment=Commitment("processed"))
+            res = await  self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
+
+            tx_hash = str(res.value)
+            print(f"🚀 Enviado Solana! Hash: {tx_hash}")
+
+            return tx_hash
+
+        except Exception as e:
+            if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+                self.solana_manager.rotate_rpc()
+                return await self.send_transaction(pools_list, dir_list, tokens_list, amount_usd, quote_data)
+
+            print(f"❌ Erro crítico no envio Solana: {e}")
+            return None
+
+    async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
+                             fee: int = 0, tolerance: float = 0.007, quote_data: dict = None):
+        try:
+            t_in_info = self.config.tokens_by_address.get(token_in.lower())
+            t_out_info = self.config.tokens_by_address.get(token_out.lower())
+
+            dec_in = t_in_info.decimals if t_in_info else 9
+            dec_out = t_out_info.decimals if t_out_info else 6
+
+            amount_in_raw = int(amount_in_usd * 10 ** dec_in)
+            balance_raw = await self.get_token_balance(token_in)
+
+            if balance_raw < amount_in_raw:
+                logging.warning(f"❌ [SOLANA] Saldo insuficiente: {balance_raw} < {amount_in_raw}")
+                return False, 0
+
+            if not quote_data:
+                logging.error("❌ Erro: quote_data da Jupiter é obrigatório para validação na Solana")
+                return False, 0
+
+            amount_out_raw = int(quote_data['outAmount'])
+            amount_out_real = amount_out_raw / 10 ** dec_out
+
+            min_acceptable = expected_out_units * (1 - tolerance)
+
+            if amount_out_real < min_acceptable:
+                logging.warning(
+                    f"⚠️ Swap REJEITADO (SOLANA): Real {amount_out_real:.6f} < Min {min_acceptable:.6f}")
+                return False, amount_out_real
+
+            logging.info(
+                f"✅ Swap validado (SOLANA): Receberás aprox. {amount_out_real:.6f} {t_out_info.symbol if t_out_info else ''}")
+            return True, amount_out_real
+
+        except Exception as e:
+            logging.error(f"❌ Erro na validação Solana: {e}")
+            return False, 0
+
+
+class TokenInfo:
+    def __init__(self, symbol, decimals):
+        self.symbol = symbol
+        self.decimals = decimals
+
+
+# --- FUNÇÃO PRINCIPAL DE TESTE ---
+async def main():
+    # ⚠️ ADICIONA AS TUAS CONFIGURAÇÕES DE TESTE AQUI ⚠️
+    RPC_URL = "https://api.mainnet-beta.solana.com"  # Ou o teu link Helius/Quicknode
+    SUA_CHAVE_PRIVADA_BASE58 = "wD6mRHHaG1w7rBrwWhWLgSDSAwduN1MqRGRHrNU4GRcfYCcmbEt9apdag2DW4Fo4mZgC7JJxXnAQou5ELTqgKh5"
+
+    USDC_SOLANA = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    SOL_NATIVA = "So11111111111111111111111111111111111111112"
+
+    print("⚡ Inicializando sessão assíncrona...")
+    async with aiohttp.ClientSession() as session:
+        # Instancia o teu executor
+        properties = PropertiesMulti()
+        solana_manager = SolanaManager()
+        executor = SolanaExecutor(
+            solana_manager,
+            properties
+        )
+
+        print(f"🔑 Chave Pública derivada: {executor.wallet.pubkey()}")
+        print("📡 Conectando à rede para ler saldos...\n")
+
+        # Teste 1: Buscar saldo de SOL (Nativo)
+        saldo_sol_raw = await executor.get_token_balance(SOL_NATIVA)
+        saldo_sol_formatado = saldo_sol_raw / 10 ** 9
+        print(f" Balance de SOL: {saldo_sol_formatado:.4f} SOL ({saldo_sol_raw} lamports)")
+
+        # Teste 2: Buscar saldo de USDC (SPL Token via descompactação binária struct)
+        saldo_usdc_raw = await executor.get_token_balance(USDC_SOLANA)
+        saldo_usdc_formatado = saldo_usdc_raw / 10 ** 6
+        print(f" Balance de USDC: ${saldo_usdc_formatado:.2f} USDC ({saldo_usdc_raw} raw)")
+
+        print("\n🏁 Teste de comunicação concluído.")
+
+        # Fecha a conexão do RPC de forma limpa
+        await solana_manager.solana.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

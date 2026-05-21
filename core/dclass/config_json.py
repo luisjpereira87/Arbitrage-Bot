@@ -11,7 +11,7 @@ class Config:
     fees: List[int] = field(init=False)
     triangles: List[Tuple[str, str, str]] = field(init=False)
     simple_pairs: List[Tuple[str, str]] = field(init=False)
-    multi_chain: List[Tuple[str, str, str]] = field(init=False)
+    multi_chain: List[Tuple[str, str, str, str]] = field(init=False)
     tokens_by_address: Dict[str, 'TokenInfo'] = field(init=False)
 
     def __post_init__(self):
@@ -49,7 +49,7 @@ class Config:
         ]
 
         self.multi_chain = [
-            (str(p[0]), str(p[1]), str(p[2]))
+            (str(p[0]), str(p[1]), str(p[2]), str(p[3]))
             for p in data.get("multi_chain", [])
         ]
 

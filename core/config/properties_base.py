@@ -36,3 +36,5 @@ class PropertiesBase(ABC):
     CONTRACT_ABI: list | None
     PRIVATE_KEY_WALLET_HL: str | None
     WALLET_ADDRESS_HL: str | None
+
+    PRIVATE_KEY_WALLET_SOLANA: str | None

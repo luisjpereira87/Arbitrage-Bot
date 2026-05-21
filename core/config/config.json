@@ -67,6 +67,34 @@
     "COMP": {
       "addr": "0x354A6dA3fcde098F8389cad84b0182725c6C91dE",
       "dec": 18
+    },
+    "SOL": {
+      "addr": "So11111111111111111111111111111111111111112",
+      "dec": 9
+    },
+    "USDC_SOL": {
+      "addr": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "dec": 6
+    },
+    "JUP": {
+      "addr": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+      "dec": 6
+    },
+    "WIF": {
+      "addr": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+      "dec": 6
+    },
+    "PYTH": {
+      "addr": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+      "dec": 6
+    },
+    "JTO": {
+      "addr": "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+      "dec": 9
+    },
+    "POPCAT": {
+      "addr": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+      "dec": 9
     }
   },
   "fees": [
@@ -179,37 +207,80 @@
     [
       "USDC",
       "WETH",
-      "ETH/USDC:USDC"
+      "ETH/USDC:USDC",
+      "arbitrum"
     ],
     [
       "USDC",
       "AAVE",
-      "AAVE/USDC:USDC"
+      "AAVE/USDC:USDC",
+      "arbitrum"
     ],
     [
       "USDC",
       "LINK",
-      "LINK/USDC:USDC"
+      "LINK/USDC:USDC",
+      "arbitrum"
     ],
     [
       "USDC",
       "ARB",
-      "ARB/USDC:USDC"
+      "ARB/USDC:USDC",
+      "arbitrum"
     ],
     [
       "USDC",
       "PENDLE",
-      "PENDLE/USDC:USDC"
+      "PENDLE/USDC:USDC",
+      "arbitrum"
     ],
     [
       "USDC",
       "GMX",
-      "GMX/USDC:USDC"
+      "GMX/USDC:USDC",
+      "arbitrum"
     ],
     [
       "USDC",
       "UNI",
-      "UNI/USDC:USDC"
+      "UNI/USDC:USDC",
+      "arbitrum"
+    ],
+    [
+      "USDC_SOL",
+      "SOL",
+      "SOL/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "JUP",
+      "JUP/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "WIF",
+      "WIF/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "PYTH",
+      "PYTH/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "JTO",
+      "JTO/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "POPCAT",
+      "POPCAT/USDC:USDC",
+      "solana"
     ]
   ]
 }

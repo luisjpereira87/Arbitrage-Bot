@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from core.dclass.chains_enum import Chains
+
 
 @dataclass
 class WatchedPair:
@@ -12,3 +14,4 @@ class WatchedPair:
     hl_pair: str
     pools_map: dict[str, str]
     z4o: bool
+    chain: Chains

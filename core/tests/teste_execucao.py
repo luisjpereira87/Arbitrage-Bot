@@ -4,7 +4,7 @@ import time
 from dotenv import load_dotenv
 from web3 import Web3
 
-from core.web3.wallet_manager import WalletManager
+from core.web3.arbitrum_executor import WalletManager
 
 load_dotenv()
 

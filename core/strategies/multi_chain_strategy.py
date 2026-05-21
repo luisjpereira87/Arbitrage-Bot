@@ -9,6 +9,7 @@ import ccxt.async_support as ccxt
 from core.bots.exchanges.exchange_client import ExchangeClient
 from core.config.properties_multi import PropertiesMulti
 from core.dclass.active_position_dclass import ActivePosition
+from core.dclass.chains_enum import Chains
 from core.dclass.dex_opportunity_dclass import DexOpportunity
 from core.dclass.signal_enum import Signal
 from core.dclass.watched_pair_dclass import WatchedPair
@@ -22,10 +23,10 @@ class MultiChainStrategy(ArbitrageBase):
     def __init__(self, web3_manager, properties: PropertiesMulti, pool_finder: PoolFinder, wallet: WalletBase,
                  capital_amount: float):
         super().__init__(web3_manager, properties.CONFIG)
-        self.watched_pairs = None
+        self.watched_pairs: list[WatchedPair] = []
         self.finder = pool_finder
         self.wallet = wallet
-        self.capital = wallet.get_usdc_balance()
+        # self.capital = wallet.get_usdc_balance()
         self.config = properties.CONFIG
         self.min_usdc_to_trade = 10.0
         self.min_exit_spread = -1.5
@@ -48,116 +49,248 @@ class MultiChainStrategy(ArbitrageBase):
         self.blacklist_duration = 300  # 5 minutos de "castigo"
 
         self.active_positions = TradePositionMulti.load_all_positions()
+        self.stop_chain = Chains.ARBITRUM
 
         self.init_cache()
 
     def init_cache(self):
-        # --- NOVO: CACHE INICIAL ---
-        # Mapeamos logo todas as pools possíveis para os pares que queres vigiar
         all_pools_for_cache = set()
         self.watched_pairs = []
         FEE_TIERS = self.config.fees
-        for symbol_a, symbol_b, hl_pair in self.config.multi_chain:
 
-            # 1. Obter endereços
-            addr_a = self.config.tokens.get(symbol_a).address
-            addr_b = self.config.tokens.get(symbol_b).address
-            dec_a = self.config.tokens.get(symbol_a).decimals
-            dec_b = self.config.tokens.get(symbol_b).decimals
+        for symbol_a, symbol_b, hl_pair, chain in self.config.multi_chain:
+            if chain == self.stop_chain.value:
+                continue
 
-            # 2. Ordenar alfabeticamente (como a Uniswap faz internamente)
-            # t0 será sempre o menor endereço, t1 o maior.
-            t0, t1 = sorted([addr_a.lower(), addr_b.lower()])
+            # 1. Obter dados do token (mantendo case-sensitive para Solana)
+            token_a_data = self.config.tokens.get(symbol_a)
+            token_b_data = self.config.tokens.get(symbol_b)
 
-            # 3. Chamar o finder uma única vez com a ordem correta
-            # pools_map = self.finder.get_pools(t0, t1)
+            addr_a = token_a_data.address
+            addr_b = token_b_data.address
+            dec_a = token_a_data.decimals
+            dec_b = token_b_data.decimals
+
             pair_pools = {}
-            for fee in FEE_TIERS:
-                pool_found = self.finder.get_pools(t0, t1, fee)
-                if pool_found:
-                    # Em vez de apenas update, vamos renomear a chave para incluir a fee
-                    for dex_name, addr in pool_found.items():
-                        unique_key = f"{dex_name}_{fee}"  # Ex: UNI_V3_500, UNI_V3_3000
-                        pair_pools[unique_key] = addr
+            z4o = True  # Default
 
-            if not pair_pools:
-                print(f"⚠️ Nenhuma pool encontrada para {symbol_a}/{symbol_b} em nenhuma fee tier.")
+            # --- LÓGICA POR REDE ---
+            if chain == 'solana':
+                # Na Solana/Jupiter, a "pool" é a própria API.
+                # Podemos colocar um placeholder ou o Mint do token para manter a estrutura.
+                pair_pools["JUPITER"] = addr_b
+                # z4o não é usado na Solana, mas preenchemos para não quebrar a DClass
+                z4o = True
 
-            for addr in pair_pools.values():
-                all_pools_for_cache.add(addr.lower())
+            else:
+                # LÓGICA ARBITRUM (EVM)
+                addr_a_l = addr_a.lower()
+                addr_b_l = addr_b.lower()
 
-            # 4. Cálculo do zeroForOne para este par (USDC -> Ativo)
-            # Se o endereço do USDC (addr_a) for menor que o do Ativo (addr_b), z4o = True
-            z4o = int(addr_a, 16) < int(addr_b, 16)
+                # Ordenar para a Uniswap (t0 é o menor hexadecimal)
+                t0, t1 = sorted([addr_a_l, addr_b_l])
 
-            # Guardamos os endereços para evitar lookups repetidos no config
+                for fee in FEE_TIERS:
+                    pool_found = self.finder.get_pools(t0, t1, fee)
+                    if pool_found:
+                        for dex_name, addr in pool_found.items():
+                            unique_key = f"{dex_name}_{fee}"
+                            pair_pools[unique_key] = addr.lower()
+                            all_pools_for_cache.add(addr.lower())
 
+                # Cálculo real do zeroForOne para EVM
+                z4o = int(addr_a, 16) < int(addr_b, 16)
+
+            if not pair_pools and chain != 'solana':
+                print(f"⚠️ Nenhuma pool encontrada para {symbol_a}/{symbol_b}")
+
+            # 4. Adicionar à lista global de pares vigiados
             self.watched_pairs.append(
-                WatchedPair(addr_a, addr_b, symbol_a, symbol_b, dec_a, dec_b, hl_pair, pair_pools, z4o)
+                WatchedPair(
+                    addr_a=addr_a,
+                    addr_b=addr_b,
+                    symbol_a=symbol_a,
+                    symbol_b=symbol_b,
+                    decimal_a=dec_a,
+                    decimal_b=dec_b,
+                    hl_pair=hl_pair,
+                    pools_map=pair_pools,
+                    z4o=z4o,
+                    chain=Chains.from_str(chain),
+                )
             )
 
-        self.build_pool_cache(list(all_pools_for_cache))
+        # O build_pool_cache só precisa de rodar para as pools EVM (Arbitrum)
+        if all_pools_for_cache:
+            self.build_pool_cache(list(all_pools_for_cache))
 
-    async def analyze_all_pairs(self):
-
-        # 1. Obter inventário e saldos
+    async def calculate_all_chains_capital(self) -> dict:
+        """
+        Calcula o capital disponível, alocado e os tokens ativos para todas as chains
+        de uma única vez antes do loop de decisão.
+        """
         inventory = await self.get_all_balances()
-        dex_balance_usdc = inventory.get("USDC", 0.0)
         hl_balance_usdc = inventory.get("hl", 0.0)
 
-        """
-        total_balance_usdc = dex_balance_usdc + hl_balance_usdc
+        # Estrutura onde vamos guardar os resultados processados por chain
+        # Ex: {"solana": {"usdc_to_trade": 100.0, "active_tokens": {...}}, ...}
+        chains_capital = {}
 
-        # Capital disponível para NOVAS entradas
-        usdc_balance_to_trade = min(dex_balance_usdc, hl_balance_usdc)
-        """
+        # Mapeamos quais são as chains que temos configuradas nos nossos pares
+        active_chains = {pair.chain for pair in self.watched_pairs}
 
-        # --- AJUSTE DE SALDO PARA MULTI-SLOT ---
-        # Somamos o que já está investido na DEX (via JSONs) para saber o capital total da estratégia
-        capital_investido_dex = sum(pos.initial_balance_dex_usd for pos in self.active_positions.values())
-        # O capital total é o que temos livre + o que já está alocado na ponta DEX
-        # (Não somamos a ponta HL porque o saldo da HL já considera a margem isolada)
-        total_strategy_capital = dex_balance_usdc + capital_investido_dex
+        for chain in active_chains:
+            chain_balances = inventory.get(chain.value, {})
 
-        # Definimos quanto cada slot DEVE ter
-        target_per_slot = total_strategy_capital / self.max_slots
+            # 🚀 SOLUÇÃO DINÂMICA: Procuramos o par modelo desta chain para saber o nome do USDC
+            # Pode ser "USDC" na Arbitrum ou "USDC_SOL" na Solana
+            pair_modelo = next((p for p in self.watched_pairs if p.chain == chain), None)
+            usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
 
-        # O saldo disponível para este ciclo é o menor entre o "teórico do slot" e o que temos na carteira
-        usdc_balance_to_trade = min(target_per_slot, dex_balance_usdc, hl_balance_usdc)
-        # ----------------------------------------
+            dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
 
-        total_balance_usdc = dex_balance_usdc + hl_balance_usdc
-
-        # 2. Identificar "Batatas Quentes" (Ativos já em carteira)
-        active_tokens = {sym: units for sym, units in inventory.items()
-                         if sym not in ["USDC", "hl"] and units > 0.00001}
-
-        logging.info(
-            f"📊 [ESTADO] DEX: {dex_balance_usdc:.2f} USDC | HL: {hl_balance_usdc:.2f} USDC | Tokens: {active_tokens}")
-
-        # 3. VERIFICAÇÃO LÓGICA:
-        # Se não temos tokens para gerir E o saldo é baixo, então paramos.
-        if not active_tokens and usdc_balance_to_trade < self.min_usdc_to_trade:
-            logging.info(
-                f"⏳ Modo espera: Saldo insuficiente para novas entradas (${usdc_balance_to_trade:.2f})."
+            # Filtrar posições ativas desta chain específica
+            capital_investido_nesta_dex = sum(
+                pos.initial_balance_dex_usd for pos in self.active_positions.values()
+                if getattr(pos, 'chain', None) == chain
             )
-            return False
+
+            total_chain_capital = dex_balance_usdc + capital_investido_nesta_dex
+            target_per_slot = total_chain_capital / self.max_slots
+
+            # O capital para o trade respeita o limite do slot, o saldo real da DEX e a margem livre na HL
+            usdc_balance_to_trade = min(target_per_slot, dex_balance_usdc, hl_balance_usdc)
+            total_balance_usdc = dex_balance_usdc + hl_balance_usdc
+
+            # Identificar "Batatas Quentes" desta chain
+            active_tokens = {
+                sym: units for sym, units in chain_balances.items()
+                if "USDC" not in sym and units > 0.00001
+            }
+
+            # Guardamos no dicionário com o índice da chain
+            chains_capital[chain] = {
+                "usdc_balance_to_trade": usdc_balance_to_trade,
+                "total_balance_usdc": total_balance_usdc,
+                "active_tokens": active_tokens,
+                "dex_balance_usdc": dex_balance_usdc
+            }
+
+            logging.info(
+                f"📊 [BANCA CALCULADA] {chain.value.upper()} | "
+                f"DEX USDC: {dex_balance_usdc:.2f} | Slot Alocado: {usdc_balance_to_trade:.2f} | "
+                f"Tokens: {active_tokens}"
+            )
+
+        return chains_capital
+
+    async def _fetch_hyperliquid_prices(self):
+        """Procura os preços atuais na Hyperliquid para todos os pares vigiados."""
+        symbols_to_fetch = [p.hl_pair for p in self.watched_pairs]
+        return await self.exchange.get_multiple_prices(symbols_to_fetch)
+
+    def _update_arbitrum_pool_quotes(self):
+        """Extrai e atualiza os preços das pools da Arbitrum em batch."""
+        all_pool_addrs = [
+            addr for p in self.watched_pairs
+            if p.chain == Chains.ARBITRUM and getattr(p, 'pools_map', None)
+            for addr in p.pools_map.values()
+        ]
+        if all_pool_addrs:
+            self.get_quotes_batch(all_pool_addrs)
+
+    async def analyze_all_pairs(self):
+        # 1. 🚀 PASSO CRÍTICO: Calcula a banca de todas as chains de uma só vez antes do loop!
+        chains_capital = await self.calculate_all_chains_capital()
+
+        # 2. Atualiza preços da Hyperliquid e da Arbitrum (Dados frescos para este ciclo)
+        all_prices_hl = await self._fetch_hyperliquid_prices()
+        self._update_arbitrum_pool_quotes()
+
+        # 3. Estimar custos de gás (Exemplo Arbitrum)
+        eth_price = all_prices_hl.get('ETH/USDC:USDC').bid if 'ETH/USDC:USDC' in all_prices_hl else 3000.0
+        gas_cost_usdc = await self.wallet.get_gas_cost_usd(eth_price, Chains.ARBITRUM)
+
+        # 4. LOOP DE DECISÃO (Agora ultra-rápido rodando puramente em memória)
+        for pair in self.watched_pairs:
+            # Extrai os dados já calculados sem await e sem tocar na rede!
+            cap_data = chains_capital.get(pair.chain)
+            if not cap_data:
+                continue
+
+            usdc_balance_to_trade = cap_data["usdc_balance_to_trade"]
+            total_balance_usdc = cap_data["total_balance_usdc"]
+            active_tokens = cap_data["active_tokens"]
+
+            # Verificação rápida se o slot tem fundos mínimos para trabalhar
+            if not active_tokens and usdc_balance_to_trade < self.min_usdc_to_trade:
+                continue
+
+            symbol_base = pair.symbol_b  # Ex: "HYPE"
+            active_position = self.active_positions.get(symbol_base)
+
+            # --- 🛡️ TRAVÃO DE SEGURANÇA: CONTROLO DE SLOTS ISOLADOS ---
+            # Se NÃO temos uma posição aberta para este token, significa que seria um NOVO trade.
+            # Portanto, temos de validar se esta blockchain ainda tem vagas (slots) disponíveis.
+            if not active_position:
+                slots_ocupados_na_chain = sum(
+                    1 for pos in self.active_positions.values()
+                    if getattr(pos, 'chain', None) == pair.chain
+                )
+
+                if slots_ocupados_na_chain >= self.max_slots:
+                    # Já estoirou o limite de slots desta rede. Ignora novas oportunidades para este par.
+                    logging.debug(
+                        f"⏳ {pair.chain.value.upper()} sem slots livres ({slots_ocupados_na_chain}/{self.max_slots}). Saltando entrada em {symbol_base}")
+                    continue
+            # ---------------------------------------------------------
+
+            price_data = all_prices_hl.get(pair.hl_pair)
+            if not price_data or price_data.bid is None:
+                logging.warning(f"⚠️ Sem dados para {pair.hl_pair}, saltando...")
+                continue
+
+            hl_price = price_data.bid
+
+            # Procura oportunidades na DEX correspondente
+            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade, gas_cost_usdc)
+            if not opportunity:
+                await asyncio.sleep(1.0)
+                continue
+
+            # Executa o trade se a oportunidade for viável
+            success = await self.manage_orders(
+                opportunity, active_position, pair, usdc_balance_to_trade, total_balance_usdc, hl_price
+            )
+
+            if success:
+                logging.info(
+                    f"✅ Transação executada para {pair.symbol_b}. Parando ciclo para atualizar os saldos na próxima ronda.")
+                return True
+        await asyncio.sleep(1.0)
+        return True
+
+    """
+    async def analyze_all_pairs(self):
 
         symbols_to_fetch = [p.hl_pair for p in self.watched_pairs]
         all_prices_hl = await self.exchange.get_multiple_prices(symbols_to_fetch)
 
         # 4. Se chegámos aqui, ou temos saldo ou temos posições para gerir!
         eth_price = all_prices_hl['ETH/USDC:USDC'].bid
-        gas_cost_usdc = self.wallet.get_gas_cost_usd(eth_price)
+        gas_cost_usdc = await self.wallet.get_gas_cost_usd(eth_price, Chains.ARBITRUM)
 
         # 5. Recolher preços em Batch
+
         all_pool_addrs = []
         for pair in self.watched_pairs:
-            all_pool_addrs.extend(pair.pools_map.values())
-        current_prices = self.get_quotes_batch(all_pool_addrs)
+            if pair.chain == Chains.ARBITRUM:
+                all_pool_addrs.extend(pair.pools_map.values())
+        # current_prices = self.get_quotes_batch(all_pool_addrs)
 
         # 6. LOOP DE DECISÃO
         for pair in self.watched_pairs:
+            active_tokens, usdc_balance_to_trade, total_balance_usdc = await self.calculate_capital(pair.chain)
 
             symbol_base = pair.symbol_b  # Ex: "ARB"
             active_position = None
@@ -167,13 +300,6 @@ class MultiChainStrategy(ArbitrageBase):
             elif len(self.active_positions) < self.max_slots:
                 active_position = None
 
-            """
-            if self.active_position is not None:
-                # Extrai o símbolo base do JSON (ex: "ARB/USDC" -> "ARB")
-                pos_base_symbol = self.active_position.symbol.split('/')[0]
-                if pair.symbol_b != pos_base_symbol:
-                    continue
-            """
             price_data = all_prices_hl[pair.hl_pair]
             if not price_data or price_data.bid is None:
                 logging.warning(f"⚠️ Sem dados para {pair.hl_pair}, saltando...")
@@ -181,12 +307,7 @@ class MultiChainStrategy(ArbitrageBase):
 
             hl_price = price_data.bid
 
-            opportunity = self.find_cross_dex_spread(
-                pair.addr_a, pair.addr_b,
-                pair.symbol_a, pair.symbol_b,
-                hl_price, pair.pools_map,
-                current_prices, usdc_balance_to_trade, gas_cost_usdc
-            )
+            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade, gas_cost_usdc)
 
             if not opportunity:
                 continue
@@ -200,6 +321,7 @@ class MultiChainStrategy(ArbitrageBase):
                 return True  # Sai do analyze_all_pairs imediatamente
 
         return True
+    """
 
     async def manage_orders(self, opportunity: DexOpportunity, active_position: ActivePosition,
                             watched_pair: WatchedPair, usdc_balance_to_trade: float,
@@ -213,6 +335,7 @@ class MultiChainStrategy(ArbitrageBase):
         direction = opportunity.direction
         dex_fee = opportunity.dex_fee
         spread_percent = opportunity.spread
+        data_quote = opportunity.data_quote
 
         symbol_b = watched_pair.symbol_b
         hl_pair = watched_pair.hl_pair
@@ -244,7 +367,7 @@ class MultiChainStrategy(ArbitrageBase):
                     logging.info(f"💰 META ATINGIDA: Fechando {symbol_b} | Lucro Real: ${current_profit_real:.4f}")
                     # Importante: units_dex vem do JSON para garantir que vendemos TUDO o que compramos
                     await self.execute_exit_sequence(watched_pair, active_position.units_dex, pool_addr, direction,
-                                                     dex_price, int(dex_fee))
+                                                     dex_price, int(dex_fee), data_quote)
                     return True
                 else:
                     logging.info(
@@ -279,7 +402,7 @@ class MultiChainStrategy(ArbitrageBase):
                 # Passamos o real_units para a entrada para garantir hedge perfeito
                 await self.execute_entry_sequence(
                     watched_pair, adjust_balance, total_balance_usdc, dex_price, price_hl, int(dex_fee),
-                    pool_addr, direction
+                    pool_addr, direction, data_quote
                 )
                 return True
 
@@ -335,7 +458,7 @@ class MultiChainStrategy(ArbitrageBase):
     async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc_to_trade: float, total_balance_usdc: float,
                                      dex_price: float,
                                      hl_price: float,
-                                     dex_fee: int, selected_pool: str, direction: bool):
+                                     dex_fee: int, selected_pool: str, direction: bool, data_quote: dict | None):
 
         # 1. Validação inicial de segurança
         if amount_usdc_to_trade < 11.0:
@@ -344,13 +467,14 @@ class MultiChainStrategy(ArbitrageBase):
 
         # 2. Check de Liquidez e Obtenção de Unidades REAIS
         expected_units = amount_usdc_to_trade / dex_price
-        viable, real_units = self.wallet.is_swap_viable(
+        viable, real_units = await self.wallet.is_swap_viable(
             token_in=pair.addr_a,
             token_out=pair.addr_b,
             amount_in_usd=amount_usdc_to_trade,
             expected_out_units=expected_units,
             fee=dex_fee,
-            tolerance=0.001
+            tolerance=0.001,
+            chain=pair.chain
         )
 
         # CÁLCULO DO VALOR REAL QUE VAI SER EXECUTADO
@@ -374,7 +498,9 @@ class MultiChainStrategy(ArbitrageBase):
             pools_list=[selected_pool],
             dir_list=[direction],
             tokens_list=[pair.addr_a, pair.addr_b],
-            amount_usd=usdc_wei
+            amount_usd=usdc_wei,
+            chain=pair.chain,
+            quote_data=data_quote
         )
 
         if not tx_hash:
@@ -440,12 +566,14 @@ class MultiChainStrategy(ArbitrageBase):
             self.active_positions[pair.hl_pair] = new_pos
             return True
         else:
-            self.force_exit_to_usdc(pair.addr_b, pair.addr_a, real_units, selected_pool, not direction)
+            self.force_exit_to_usdc(pair, pair.addr_b, pair.addr_a, real_units, selected_pool, not direction,
+                                    data_quote)
 
             return False
 
-    def force_exit_to_usdc(self, token_address: str, usdc_addr: str, amount_units: float, pool_to_use: str,
-                           direction_to_use: bool):
+    def force_exit_to_usdc(self, pair: WatchedPair, token_address: str, usdc_addr: str, amount_units: float,
+                           pool_to_use: str,
+                           direction_to_use: bool, data_quote: dict | None):
         """
         Saída de emergência sem dependência de estado interno volátil.
         """
@@ -463,7 +591,9 @@ class MultiChainStrategy(ArbitrageBase):
                 pools_list=[pool_to_use],
                 dir_list=[direction_to_use],
                 tokens_list=[token_address, usdc_addr],
-                amount_usd=amount_in_wei
+                amount_usd=amount_in_wei,
+                chain=pair.chain,
+                quote_data=data_quote
             )
 
             if tx_hash:
@@ -477,7 +607,7 @@ class MultiChainStrategy(ArbitrageBase):
             return False
 
     async def execute_exit_sequence(self, pair: WatchedPair, units, selected_pool: str, direction: bool,
-                                    dex_price: float, dex_fee: int):
+                                    dex_price: float, dex_fee: int, data_quote: dict | None):
         """
         Sequência de Fecho Protegida:
         1. Valida liquidez via Quoter (Simulação)
@@ -489,13 +619,14 @@ class MultiChainStrategy(ArbitrageBase):
         expected_usdc = units * dex_price
         # 1. Simulação Quoter (Token -> USDC)
         # Verificamos se o que vamos receber cobre o custo inicial ou a meta
-        viable, real_units_usdc = self.wallet.is_swap_viable(
+        viable, real_units_usdc = await self.wallet.is_swap_viable(
             token_in=pair.addr_b,  # Endereço do ARB
             token_out=pair.addr_a,  # Endereço do USDC
             amount_in_usd=units,
             expected_out_units=expected_usdc,
             fee=dex_fee,
-            tolerance=0.003  # 1.5% de tolerância para garantir a saída
+            tolerance=0.003,  # 1.5% de tolerância para garantir a saída
+            chain=pair.chain
         )
 
         if not viable:
@@ -506,7 +637,7 @@ class MultiChainStrategy(ArbitrageBase):
 
         # 2. Venda na DEX (A parte mais sensível)
         # Consultamos o saldo real no contrato para evitar falhas de 'Insufficient Balance'
-        units_in_wei = self.wallet.get_token_balance(pair.addr_b)
+        units_in_wei = await self.wallet.get_token_balance(pair.addr_b, pair.chain)
 
         if units_in_wei == 0:
             logging.error(f"❌ Erro: Saldo de {pair.symbol_b} no contrato é 0. O JSON pode estar desalinhado.")
@@ -518,11 +649,13 @@ class MultiChainStrategy(ArbitrageBase):
         tokens_para_saida = [pair.addr_b, pair.addr_a]
         direction_exit = not direction
 
-        tx_hash = self.wallet.send_transaction(
+        tx_hash = await self.wallet.send_transaction(
             pools_list=[selected_pool],
             dir_list=[direction_exit],
             tokens_list=tokens_para_saida,
-            amount_usd=units_in_wei  # Enviamos o valor inteiro em Wei
+            amount_usd=units_in_wei,  # Enviamos o valor inteiro em Wei
+            chain=pair.chain,
+            quote_data=data_quote
         )
 
         # TRAVA DE SEGURANÇA: Se a DEX falhar, paramos aqui para manter o Short aberto (Hedge)
@@ -560,6 +693,7 @@ class MultiChainStrategy(ArbitrageBase):
 
         return False
 
+    """
     async def get_all_balances(self):
         # Usamos um Set para endereços já consultados (mais rápido que List)
         processed_addresses = set()
@@ -570,16 +704,67 @@ class MultiChainStrategy(ArbitrageBase):
             t_in = pair.addr_a
             t_out = pair.addr_b
             if t_in not in processed_addresses:
-                raw_in = self.wallet.get_token_balance(token_address=t_in)
-                balances[pair.symbol_a] = self.normalize_amount(raw_in, pair.decimal_a)
+                raw_in = await self.wallet.get_token_balance(token_address=t_in, chain=pair.chain)
+                balances[pair.chain.value][pair.symbol_a] = self.normalize_amount(raw_in, pair.decimal_a)
                 processed_addresses.add(t_in)
 
             if t_out not in processed_addresses:
-                raw_out = self.wallet.get_token_balance(token_address=t_out)
-                balances[pair.symbol_b] = self.normalize_amount(raw_out, pair.decimal_b)
+                raw_out = await self.wallet.get_token_balance(token_address=t_out, chain=pair.chain)
+                balances[pair.chain.value][pair.symbol_b] = self.normalize_amount(raw_out, pair.decimal_b)
                 processed_addresses.add(t_out)
 
         balances["hl"] = await self.exchange.get_available_balance()
+        return balances
+    """
+
+    async def get_all_balances(self):
+        # 1. Usamos o Set para rastrear o que precisamos de consultar (evita duplicados)
+        # Guardamos tuplos com (endereço, simbolo, decimais, chain)
+        tokens_to_fetch = set()
+
+        for pair in self.watched_pairs:
+            tokens_to_fetch.add((pair.addr_a, pair.symbol_a, pair.decimal_a, pair.chain))
+            tokens_to_fetch.add((pair.addr_b, pair.symbol_b, pair.decimal_b, pair.chain))
+
+        # 2. Criamos a lista de tarefas assíncronas para disparar tudo em paralelo
+        tasks = []
+        # Guardamos a ordem para saber quem é quem depois do gather
+        metadata = []
+
+        for addr, symbol, decimals, chain in tokens_to_fetch:
+            tasks.append(self.wallet.get_token_balance(token_address=addr, chain=chain))
+            metadata.append((chain.value, symbol, decimals))
+
+        # Adicionamos a tarefa do saldo da Hyperliquid à festa
+        tasks.append(self.exchange.get_available_balance())
+
+        # 3. Disparamos TODOS os pedidos de rede ao mesmo tempo!
+        # O gather faz com que o nó RPC da Solana e a API da Hyperliquid respondam em simultâneo
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 4. Construímos o dicionário final garantindo que as chaves existem
+        balances = {}
+
+        # Processamos os resultados dos tokens (todos os elementos menos o último)
+        for i in range(len(metadata)):
+            chain_val, symbol, decimals = metadata[i]
+            raw_balance = results[i]
+
+            # Se houve erro na rede para este token específico, pomos a 0 e não crashamos o bot
+            if isinstance(raw_balance, Exception):
+                logging.error(f"❌ Erro ao obter saldo de {symbol} na chain {chain_val}: {raw_balance}")
+                raw_balance = 0
+
+            # Inicializa o sub-dicionário da chain se ele ainda não existir (Resolve o KeyError!)
+            if chain_val not in balances:
+                balances[chain_val] = {}
+
+            balances[chain_val][symbol] = self.normalize_amount(raw_balance, decimals)
+
+        # O último resultado do gather é o saldo da Hyperliquid
+        hl_balance = results[-1]
+        balances["hl"] = 0.0 if isinstance(hl_balance, Exception) else float(hl_balance)
+
         return balances
 
     def normalize_amount(self, raw_amount, decimals):
@@ -587,66 +772,6 @@ class MultiChainStrategy(ArbitrageBase):
         if raw_amount == 0:
             return 0.0
         return raw_amount / (10 ** decimals)
-
-    def find_cross_dex_spread(self, token_in, token_out, symbol_a, symbol_b, price_hl, pools_map,
-                              current_prices, amount_usdc, gas_cost_usdc) -> (DexOpportunity | None):
-        best_opportunity = None
-        logging.info(f"--- 🔍 Verificando Par: {symbol_a}/{symbol_b} | Pools: {len(pools_map)}")
-
-        # Normalização do capital (corrigido para symbol_a/USDC)
-        token_in_data = self.config.tokens.get(symbol_a)
-        decimals_in = token_in_data.decimals if token_in_data else 6
-        # cap_human = amount_usdc / (10 ** decimals_in)
-        cap_human = amount_usdc
-
-        for dex_name, pool_addr in pools_map.items():
-            if pool_addr.lower() in self.pool_blacklist:
-                if time.time() < self.pool_blacklist[pool_addr.lower()]:
-                    continue  # Pula esta pool, ainda está castigada
-                else:
-                    del self.pool_blacklist[pool_addr.lower()]  # Já pode tentar de novo
-
-            p_addr_l = pool_addr.lower()
-            current_price = current_prices.get(p_addr_l) or current_prices.get(pool_addr)
-
-            q1 = self._calculate_quote_local(p_addr_l, token_in, token_out, current_price)
-            if q1:
-                raw_price_dex, direction, fee_dex_ppm = q1
-
-                price_dex = 1 / raw_price_dex
-
-                logging.info(f"Dex: {dex_name}, Pair: {symbol_a}/{symbol_b}, Price: {price_dex}")
-
-                # Cálculos de lucro e spread
-                fee_dex_percent = fee_dex_ppm / 1_000_000
-                # Tokens que consegues comprar agora
-                tokens_bought = (cap_human * (1 - fee_dex_percent)) / price_dex
-
-                # Valor que recebes ao vender na HL (já descontando abertura e fecho de lá)
-                total_recebido_hl = (tokens_bought * price_hl) * (1 - 0.00070)  # 0.00035 * 2
-
-                # Custo total para recuperar o teu USDC na DEX (inclui a taxa de quando venderes o token)
-                custo_reverter_dex = (tokens_bought * price_dex) * fee_dex_percent
-
-                # Gás para as duas pontas
-                total_gas = gas_cost_usdc * 2
-
-                # LUCRO REAL = (O que ganhas na HL) - (O que gastaste na DEX) - (O que vais gastar para voltar) - (Gás)
-                net_profit = total_recebido_hl - cap_human - custo_reverter_dex - total_gas
-
-                spread_percent = ((price_hl / price_dex) - 1) * 100
-
-                # --- A LÓGICA DE COMPARAÇÃO ---
-
-                current_opp = DexOpportunity("MULTI_CHAIN", net_profit, spread_percent, symbol_b, price_dex, price_hl,
-                                             pool_addr, dex_name, fee_dex_ppm, direction)
-
-                # Se for a primeira ou se for melhor que a anterior, guarda
-                if best_opportunity is None or current_opp.profit > best_opportunity.profit:
-                    best_opportunity = current_opp
-
-        # Só retorna depois de verificar TODAS as pools do map
-        return best_opportunity
 
     def check_viability_dynamic(self, watched_pair: WatchedPair, net_profit, amount_usdc, is_exit=False,
                                 spread_percent=None):
@@ -662,7 +787,7 @@ class MultiChainStrategy(ArbitrageBase):
 
             success = net_profit >= min_profit_required and spread_percent >= min_spread_required
 
-            if spread_percent > 0.20:
+            if spread_percent > 20:
                 gap = min_profit_required - net_profit
                 gap_str = f" | Falta: ${gap:.4f}" if gap > 0 else " | ✅ PRONTO"
 

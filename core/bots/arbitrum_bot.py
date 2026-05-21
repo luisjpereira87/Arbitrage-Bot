@@ -5,7 +5,7 @@ from core.config.properties_dex import PropertiesDex
 from core.pools.pool_finder import PoolFinder
 from core.strategies.simple_strategy import SimpleStrategy
 from core.strategies.triangular_strategy import TriangularStrategy
-from core.web3.wallet_manager import WalletManager
+from core.web3.arbitrum_executor import WalletManager
 from core.web3.web3_manager import Web3Manager
 
 

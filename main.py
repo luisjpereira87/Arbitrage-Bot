@@ -22,6 +22,10 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("solana").setLevel(logging.WARNING)
 
 if __name__ == '__main__':
     properties_multi = PropertiesMulti()

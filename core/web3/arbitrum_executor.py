@@ -1,10 +1,11 @@
 import logging
 
 from core.config.properties_base import PropertiesBase
+from core.dclass.chains_enum import Chains
 from core.web3.wallet_base import WalletBase
 
 
-class WalletManager(WalletBase):
+class ArbitrumExecutor(WalletBase):
     def __init__(self, web3_manager, properties: PropertiesBase):
         self.web3_manager = web3_manager
 
@@ -81,7 +82,7 @@ class WalletManager(WalletBase):
     def quoter_contract(self):
         return self.w3.eth.contract(address=self.quoter_address, abi=self.quoter_abi)
 
-    def check_and_approve_executor(self, amount_usd: float = 100.0):
+    def check_and_approve_executor(self, amount_usd: float = 100.0, chain=Chains.ARBITRUM):
         """Dá permissão ao contrato para gastar USDC usando o RPC atual"""
         try:
             token_contract = self.w3.eth.contract(address=self.usdc_address, abi=self.erc20_abi)
@@ -121,7 +122,8 @@ class WalletManager(WalletBase):
             print(f"❌ Erro no Approve: {e}")
             return False
 
-    def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str], amount_usd: float):
+    async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
+                               amount_usd: float, chain=Chains.ARBITRUM, quote_data: dict | None = None):
         # 1. TRATAMENTO DO VALOR
         # Se amount_usd já for o valor em WEI (ex: vindo da sequência de saída), não multiplicamos
         """
@@ -219,12 +221,12 @@ class WalletManager(WalletBase):
             if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout"]):
                 print("🔄 Erro de RPC detectado. Rotacionando...")
                 self.web3_manager.rotate_rpc()
-                return self.send_transaction(pools_list, dir_list, tokens_list, amount_usd)
+                return await self.send_transaction(pools_list, dir_list, tokens_list, amount_usd)
 
             print(f"❌ Erro crítico no envio: {e}")
             return None
 
-    def get_usdc_balance(self) -> int:
+    async def get_usdc_balance(self, chain=Chains.ARBITRUM) -> int:
         try:
             usdc_abi = [{"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf",
                          "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"}]
@@ -233,11 +235,11 @@ class WalletManager(WalletBase):
         except Exception as e:
             if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.web3_manager.rotate_rpc()
-                return self.get_usdc_balance()
+                return await self.get_usdc_balance()
             print(f"❌ Erro crítico no envio: {e}")
             return 0
 
-    def get_token_balance(self, token_address) -> int:
+    async def get_token_balance(self, token_address, chain=Chains.ARBITRUM) -> int:
         """
         Consulta o saldo de qualquer token ERC-20.
         :param token_address: Endereço do contrato do token (WETH, ARB, etc)
@@ -275,12 +277,12 @@ class WalletManager(WalletBase):
             if any(x in str(e).lower() for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 print("🔄 RPC instável, a rodar...")
                 self.web3_manager.rotate_rpc()
-                return self.get_token_balance(token_address)
+                return await self.get_token_balance(token_address)
 
             print(f"❌ Erro ao consultar balanço do token {token_address}: {e}")
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
 
-    def get_gas_cost_usd(self, eth_price: (float | None)) -> float:
+    async def get_gas_cost_usd(self, eth_price: (float | None), chain: Chains) -> float:
         if eth_price is None:
             eth_price = self._get_eth_price_chainlink()
 
@@ -322,8 +324,8 @@ class WalletManager(WalletBase):
             print(f"❌ Erro ao consultar preço de eth : {e}")
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
 
-    def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                       fee: int = 3000, tolerance: float = 0.007):
+    async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
+                             fee: int = 3000, tolerance: float = 0.007, chain=Chains.ARBITRUM):
         """
         Simula o swap na Uniswap V3 de forma dinâmica usando os decimais do Config.
         """

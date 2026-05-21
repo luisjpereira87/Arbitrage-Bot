@@ -4,7 +4,7 @@ import logging
 from core.config.properties_multi import PropertiesMulti
 from core.pools.pool_finder import PoolFinder
 from core.strategies.multi_chain_strategy import MultiChainStrategy
-from core.web3.wallet_manager import WalletManager
+from core.web3.wallet_main import WalletMain
 from core.web3.web3_manager import Web3Manager
 
 
@@ -12,9 +12,8 @@ class MultiChainBot():
     def __init__(self, properties: PropertiesMulti):
         self.web3_manager = Web3Manager()
         self.finder = PoolFinder(self.web3_manager)  # A classe que criámos
-        self.wallet = WalletManager(self.web3_manager, properties)
-        self.multi_chain = MultiChainStrategy(self.web3_manager, properties, self.finder, self.wallet,
-                                              self.wallet.get_usdc_balance())
+        self.wallet = WalletMain(properties)
+        self.multi_chain = MultiChainStrategy(self.web3_manager, properties, self.finder, self.wallet, 0.0)
 
     @property
     def w3(self):
