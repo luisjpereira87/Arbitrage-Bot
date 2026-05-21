@@ -208,7 +208,6 @@ class TokenInfo:
 async def main():
     # ⚠️ ADICIONA AS TUAS CONFIGURAÇÕES DE TESTE AQUI ⚠️
     RPC_URL = "https://api.mainnet-beta.solana.com"  # Ou o teu link Helius/Quicknode
-    SUA_CHAVE_PRIVADA_BASE58 = "wD6mRHHaG1w7rBrwWhWLgSDSAwduN1MqRGRHrNU4GRcfYCcmbEt9apdag2DW4Fo4mZgC7JJxXnAQou5ELTqgKh5"
 
     USDC_SOLANA = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
     SOL_NATIVA = "So11111111111111111111111111111111111111112"
