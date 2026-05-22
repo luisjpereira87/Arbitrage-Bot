@@ -390,26 +390,34 @@ class ArbitrageBase:
                         price_dex = amount_out_human / usdc_balance_to_trade
 
                         preco_liquido_site = 1 / price_dex if price_dex > 0 else 0.0
-                        # --- CÁLCULO CORRIGIDO DO PREÇO BRUTO (SEM TAXAS) ---
+
+                        # --- CÁLCULO DO PREÇO BRUTO REAL (EXTRAÇÃO DIRETA DA API) ---
                         try:
-                            total_fees_raw = 0
-                            # Percorre o plano de rotas para somar as taxas cobradas no token de saída (Target)
-                            for step in data.get('routePlan', []):
-                                swap_info = step.get('swapInfo', {})
-                                if swap_info.get('feeMint') == pair.addr_b:
-                                    total_fees_raw += int(swap_info.get('feeAmount', 0))
-                            
-                            # Quantidade teórica total de tokens recebidos se a taxa fosse zero
-                            out_raw_gross = out_raw + total_fees_raw
-                            amount_out_human_gross = out_raw_gross / (10 ** pair.decimal_b)
-                            
-                            # Preço Bruto real de mercado (Formato de ecrã: Ex: 86.99)
-                            preco_bruto_site = usdc_balance_to_trade / amount_out_human_gross if amount_out_human_gross > 0 else 0.0
+                            # A forma mais precisa de obter o preço bruto de mercado na API v6
+                            # é extrair o rácio base do primeiro passo do routePlan.
+                            route_plan = data.get('routePlan', [])
+                            if route_plan:
+                                first_step = route_plan[0].get('swapInfo', {})
+                                # Pegamos nos valores brutos que entraram e saíram especificamente da pool
+                                pool_in = int(first_step.get('inAmount', 0))
+                                pool_out = int(first_step.get('outAmount', 0))
+                                
+                                # Se a rota for direta, isto dá o preço puro de mercado da pool
+                                if pool_in > 0 and pool_out > 0:
+                                    pool_in_human = pool_in / (10 ** pair.decimal_a)
+                                    pool_out_human = pool_out / (10 ** pair.decimal_b)
+                                    
+                                    # Preço bruto de mercado (Dólares / Moedas)
+                                    preco_bruto_site = pool_in_human / pool_out_human
+                                else:
+                                    preco_bruto_site = preco_liquido_site
+                            else:
+                                preco_bruto_site = preco_liquido_site
+                                
                         except Exception:
-                            # Se a estrutura do routePlan falhar, usamos o fallback seguro
                             preco_bruto_site = preco_liquido_site
 
-                        # Log corrigido para monitorização em tempo real dos Spreads das Pools
+                        # Log de teste real (Agora os valores têm de divergir!)
                         logging.info(
                             f" 🧪 [TESTE JUP REAL] {pair.symbol_b} -> "
                             f"Preço Bruto Site: {preco_bruto_site:.4f} | "
