@@ -391,33 +391,23 @@ class ArbitrageBase:
 
                         preco_liquido_site = 1 / price_dex if price_dex > 0 else 0.0
 
-                        # --- CÁLCULO DO PREÇO BRUTO REAL (EXTRAÇÃO DIRETA DA API) ---
+                        # --- CÁLCULO DO PREÇO BRUTO REAL VIA IMPACTO DE MERCADO ---
                         try:
-                            # A forma mais precisa de obter o preço bruto de mercado na API v6
-                            # é extrair o rácio base do primeiro passo do routePlan.
-                            route_plan = data.get('routePlan', [])
-                            if route_plan:
-                                first_step = route_plan[0].get('swapInfo', {})
-                                # Pegamos nos valores brutos que entraram e saíram especificamente da pool
-                                pool_in = int(first_step.get('inAmount', 0))
-                                pool_out = int(first_step.get('outAmount', 0))
-                                
-                                # Se a rota for direta, isto dá o preço puro de mercado da pool
-                                if pool_in > 0 and pool_out > 0:
-                                    pool_in_human = pool_in / (10 ** pair.decimal_a)
-                                    pool_out_human = pool_out / (10 ** pair.decimal_b)
-                                    
-                                    # Preço bruto de mercado (Dólares / Moedas)
-                                    preco_bruto_site = pool_in_human / pool_out_human
-                                else:
-                                    preco_bruto_site = preco_liquido_site
+                            # A API devolve o priceImpactPct em string (ex: "0.05" para 0.05%)
+                            price_impact_pct = float(data.get('priceImpactPct', 0.0))
+                            
+                            # Converter percentagem para fator decimal (ex: 0.05% -> 0.0005)
+                            impact_factor = price_impact_pct / 100.0
+                            
+                            # Se o impacto for realista e menor que 100%, extraímos o preço bruto puro
+                            if 0 <= impact_factor < 1.0:
+                                preco_bruto_site = preco_liquido_site / (1.0 - impact_factor)
                             else:
                                 preco_bruto_site = preco_liquido_site
-                                
                         except Exception:
                             preco_bruto_site = preco_liquido_site
 
-                        # Log de teste real (Agora os valores têm de divergir!)
+                        # Log de teste real definitivo
                         logging.info(
                             f" 🧪 [TESTE JUP REAL] {pair.symbol_b} -> "
                             f"Preço Bruto Site: {preco_bruto_site:.4f} | "
