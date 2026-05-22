@@ -369,7 +369,7 @@ class ArbitrageBase:
             "outputMint": pair.addr_b,
             "amount": str(amount_in_base),
             "slippageBps": 10,
-            "restrictIntermediateTokens": "true"
+            "restrictIntermediateTokens": "false"
         }
         headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
 
@@ -388,7 +388,7 @@ class ArbitrageBase:
                         out_raw = int(data['outAmount'])
                         amount_out_human = out_raw / (10 ** pair.decimal_b)
                         price_dex = amount_out_human / usdc_balance_to_trade
-
+                        logging.info(f" [JUP RAW] OutBruto: {data['outAmount']} | Impacto: {data.get('priceImpactPct')}%")
                         return price_dex, True, 1000, data
 
                     else:
