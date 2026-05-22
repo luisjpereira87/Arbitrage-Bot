@@ -388,7 +388,26 @@ class ArbitrageBase:
                         out_raw = int(data['outAmount'])
                         amount_out_human = out_raw / (10 ** pair.decimal_b)
                         price_dex = amount_out_human / usdc_balance_to_trade
-                        logging.info(f" [JUP RAW] OutBruto: {data['outAmount']} | Impacto: {data.get('priceImpactPct')}%")
+
+                        # --- CÁLCULO DO PREÇO BRUTO APENAS PARA O LOG ---
+                        # Usamos o swapUsdValue da Jupiter para isolar o preço de mercado puro
+                        swap_usd_value = float(data.get('swapUsdValue', usdc_balance_to_trade))
+                        
+                        if amount_out_human > 0 and swap_usd_value > 0:
+                            # Preço de ecrã (ex: 87.27)
+                            preco_bruto_site = swap_usd_value / amount_out_human if amount_out_human > 0 else 0.0
+                            # O formato inverso que o teu bot usa internamente, mas sem taxas
+                            price_dex_bruto_bot = amount_out_human / swap_usd_value
+                        else:
+                            preco_bruto_site = 0.0
+                            price_dex_bruto_bot = 0.0
+
+                        # Log temporário de testes para comparares com a interface
+                        logging.info(
+                            f" 🧪 [TESTE JUP] Preço Bruto Site: {preco_bruto_site:.4f} | "
+                            f"Preço Líquido Bot (com taxas): {1/price_dex if price_dex > 0 else 0:.4f}"
+                        )
+                        
                         return price_dex, True, 1000, data
 
                     else:
