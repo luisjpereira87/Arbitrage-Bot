@@ -389,23 +389,31 @@ class ArbitrageBase:
                         amount_out_human = out_raw / (10 ** pair.decimal_b)
                         price_dex = amount_out_human / usdc_balance_to_trade
 
-                        # --- CÁLCULO DO PREÇO BRUTO APENAS PARA O LOG ---
-                        # Usamos o swapUsdValue da Jupiter para isolar o preço de mercado puro
-                        swap_usd_value = float(data.get('swapUsdValue', usdc_balance_to_trade))
-                        
-                        if amount_out_human > 0 and swap_usd_value > 0:
-                            # Preço de ecrã (ex: 87.27)
-                            preco_bruto_site = swap_usd_value / amount_out_human if amount_out_human > 0 else 0.0
-                            # O formato inverso que o teu bot usa internamente, mas sem taxas
-                            price_dex_bruto_bot = amount_out_human / swap_usd_value
-                        else:
-                            preco_bruto_site = 0.0
-                            price_dex_bruto_bot = 0.0
+                        preco_liquido_site = 1 / price_dex if price_dex > 0 else 0.0
+                        # --- CÁLCULO CORRIGIDO DO PREÇO BRUTO (SEM TAXAS) ---
+                        try:
+                            total_fees_raw = 0
+                            # Percorre o plano de rotas para somar as taxas cobradas no token de saída (Target)
+                            for step in data.get('routePlan', []):
+                                swap_info = step.get('swapInfo', {})
+                                if swap_info.get('feeMint') == pair.addr_b:
+                                    total_fees_raw += int(swap_info.get('feeAmount', 0))
+                            
+                            # Quantidade teórica total de tokens recebidos se a taxa fosse zero
+                            out_raw_gross = out_raw + total_fees_raw
+                            amount_out_human_gross = out_raw_gross / (10 ** pair.decimal_b)
+                            
+                            # Preço Bruto real de mercado (Formato de ecrã: Ex: 86.99)
+                            preco_bruto_site = usdc_balance_to_trade / amount_out_human_gross if amount_out_human_gross > 0 else 0.0
+                        except Exception:
+                            # Se a estrutura do routePlan falhar, usamos o fallback seguro
+                            preco_bruto_site = preco_liquido_site
 
-                        # Log temporário de testes para comparares com a interface
+                        # Log corrigido para monitorização em tempo real dos Spreads das Pools
                         logging.info(
-                            f" 🧪 [TESTE JUP] Preço Bruto Site: {preco_bruto_site:.4f} | "
-                            f"Preço Líquido Bot (com taxas): {1/price_dex if price_dex > 0 else 0:.4f}"
+                            f" 🧪 [TESTE JUP REAL] {pair.symbol_b} -> "
+                            f"Preço Bruto Site: {preco_bruto_site:.4f} | "
+                            f"Preço Líquido Bot (com taxas): {preco_liquido_site:.4f}"
                         )
                         
                         return price_dex, True, 1000, data
