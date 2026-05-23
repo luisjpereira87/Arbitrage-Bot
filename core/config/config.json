@@ -2,99 +2,148 @@
   "tokens": {
     "USDC": {
       "addr": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-      "dec": 6
+      "dec": 6,
+      "chain": "arbitrum"
     },
     "WETH": {
       "addr": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "ARB": {
       "addr": "0x912CE59144191C1204E64559FE8253a0e49E6548",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "LINK": {
       "addr": "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "WBTC": {
       "addr": "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
-      "dec": 8
+      "dec": 8,
+      "chain": "arbitrum"
     },
     "GMX": {
       "addr": "0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "PENDLE": {
       "addr": "0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "RDNT": {
       "addr": "0x3082CC23568eA640225c2467653dB90e9250AaA0",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "PEPE": {
       "addr": "0x25d887Ce7a35172C62FeBFD67a1856F20FaEbB00",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "MAGIC": {
       "addr": "0x539bdE0d7Dbd336b79148AA742883198BBF60342",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "LIDO": {
       "addr": "0x13Ad51ed4F1B7e9Dc168d8a00cB3f4dDD85EfA60",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "USDT": {
       "addr": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
-      "dec": 6
+      "dec": 6,
+      "chain": "arbitrum"
     },
     "WSTETH": {
       "addr": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
-      "dec": 6
+      "dec": 6,
+      "chain": "arbitrum"
     },
     "UNI": {
       "addr": "0xFa7F8980b0f1E64A2062791cc3b0871572f1F7f0",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "AAVE": {
       "addr": "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "CRV": {
       "addr": "0x11cDb42B0EB46D95f990BeDD4695A6e3fA034978",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "COMP": {
       "addr": "0x354A6dA3fcde098F8389cad84b0182725c6C91dE",
-      "dec": 18
+      "dec": 18,
+      "chain": "arbitrum"
     },
     "SOL": {
       "addr": "So11111111111111111111111111111111111111112",
-      "dec": 9
+      "dec": 9,
+      "chain": "solana"
     },
     "USDC_SOL": {
       "addr": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      "dec": 6
+      "dec": 6,
+      "chain": "solana"
     },
     "JUP": {
       "addr": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
-      "dec": 6
+      "dec": 6,
+      "chain": "solana"
     },
     "WIF": {
       "addr": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
-      "dec": 6
+      "dec": 6,
+      "chain": "solana"
     },
     "PYTH": {
       "addr": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
-      "dec": 6
+      "dec": 6,
+      "chain": "solana"
     },
     "JTO": {
       "addr": "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
-      "dec": 9
+      "dec": 9,
+      "chain": "solana"
     },
     "POPCAT": {
       "addr": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
-      "dec": 9
+      "dec": 9,
+      "chain": "solana"
+    },
+    "HYPE": {
+      "addr": "98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g",
+      "dec": 9,
+      "chain": "solana"
+    },
+    "ZCASH": {
+      "addr": "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS",
+      "dec": 8,
+      "chain": "solana"
+    },
+    "TRUMP": {
+      "addr": "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",
+      "dec": 6,
+      "chain": "solana"
+    },
+    "XRP": {
+      "addr": "6UpQcMAb5xMzxc7ZfPaVMgx3KqsvKZdT5U718BzD5We2",
+      "dec": 6,
+      "chain": "solana"
+    },
+    "UNI_SOL": {
+      "addr": "8FU95xFJhUUkyyCLU13HSzDLs7oC4QZdXQHL6SCeab36",
+      "dec": 8,
+      "chain": "solana"
     }
   },
   "fees": [
@@ -266,6 +315,12 @@
     ],
     [
       "USDC_SOL",
+      "POPCAT",
+      "POPCAT/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
       "PYTH",
       "PYTH/USDC:USDC",
       "solana"
@@ -278,8 +333,32 @@
     ],
     [
       "USDC_SOL",
-      "POPCAT",
-      "POPCAT/USDC:USDC",
+      "HYPE",
+      "HYPE/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "ZCASH",
+      "ZEC/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "TRUMP",
+      "TRUMP/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "XRP",
+      "XRP/USDC:USDC",
+      "solana"
+    ],
+    [
+      "USDC_SOL",
+      "UNI_SOL",
+      "UNI/USDC:USDC",
       "solana"
     ]
   ]
