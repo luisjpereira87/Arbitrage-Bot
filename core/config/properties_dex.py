@@ -14,6 +14,8 @@ class PropertiesDex(PropertiesBase):
     PRIVATE_KEY = os.getenv("PRIVATE_KEY")
     CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")
     WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
+
+    PRIVATE_KEY_WALLET_SOLANA = os.getenv("PRIVATE_KEY_WALLET_SOLANA")
     CONTRACT_ABI = [
         {
             "inputs": [

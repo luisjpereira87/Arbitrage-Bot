@@ -3,8 +3,7 @@ from abc import ABC
 from dotenv import load_dotenv
 
 from core.config.properties_base import PropertiesBase
-from core.config.properties_dex import Properties
-from core.web3.wallet_base import WalletBase
+from core.web3.executors.executor_base import ExecutorBase
 
 load_dotenv()
 
@@ -12,7 +11,7 @@ import os
 import json
 
 
-class WalletManagerFork(WalletBase, ABC):
+class WalletManagerFork(ExecutorBase, ABC):
     def __init__(self, web3_manager, properties: PropertiesBase):
         self.web3_manager = web3_manager
 
@@ -200,7 +199,7 @@ class WalletManagerFork(WalletBase, ABC):
         # Importa aqui dentro para manter o contexto do Brownie isolado
         from brownie import accounts, web3, Contract
 
-        temp_file = "../../deployed_address_fork.txt"
+        temp_file = "../../../deployed_address_fork.txt"
 
         # 1. Limpeza de Cache (Garante que cada run é um deploy novo no Fork)
         if os.path.exists(temp_file):
@@ -219,7 +218,7 @@ class WalletManagerFork(WalletBase, ABC):
         web3.provider.make_request("evm_setAccountBalance", [bot_account.address, hex(20 * 10 ** 18)])
 
         # 4. CARREGAR O ARTIFACT (ABI/Bytecode)
-        with open('../brownie/data/v7_final.json', 'r') as f:
+        with open('../../brownie/data/v7_final.json', 'r') as f:
             data = json.load(f)
 
         path = "core/brownie/contracts_backup/ArbitrageV7.sol:ArbitrageExecutorV7"

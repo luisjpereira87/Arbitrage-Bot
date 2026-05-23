@@ -4,7 +4,7 @@ from core.dclass.chains_enum import Chains
 from core.dclass.config_json import Config
 from core.dclass.watched_pair_dclass import WatchedPair
 from core.pools.pool_finder import PoolFinder
-from core.web3.web3_manager import Web3Manager
+from core.web3.rpcs.web3_manager import Web3Manager
 
 
 class WatchedPairBuilder:
@@ -13,7 +13,8 @@ class WatchedPairBuilder:
         self.finder = PoolFinder(self.web3_manager)
         self.config = config
 
-    def build(self, stop_chain: Chains | None) -> tuple[list[WatchedPair], list[Any]] | tuple[list[Any], None]:
+    def build(self, stop_chain: Chains | None) -> tuple[list[WatchedPair], list[Any], list[str]] | tuple[
+        list[Any], None, list[str]]:
         all_pools_for_cache = set()
         watched_pairs = []
         fee_tiers = self.config.fees
@@ -83,8 +84,14 @@ class WatchedPairBuilder:
                     chain=Chains.from_str(chain),
                 ))
 
+        all_pool_addrs = [
+            addr for p in watched_pairs
+            if p.chain == Chains.ARBITRUM and getattr(p, 'pools_map', None)
+            for addr in p.pools_map.values()
+        ]
+
         # O build_pool_cache só precisa de rodar para as pools EVM (Arbitrum)
         if all_pools_for_cache:
-            return watched_pairs, list(all_pools_for_cache)
+            return watched_pairs, list(all_pools_for_cache), all_pool_addrs
 
-        return watched_pairs, None
+        return watched_pairs, None, all_pool_addrs

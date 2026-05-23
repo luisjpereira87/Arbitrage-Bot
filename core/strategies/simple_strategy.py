@@ -1,27 +1,27 @@
 from core.dclass.config_json import Config
 from core.dclass.dex_opportunity_simple_dclass import DexOpportunitySimple
-from core.dclass.watched_pair_simple_dclass import WatchedPairSimple
 from core.pools.pool_finder import PoolFinder
 from core.strategies.arbitrage_base import ArbitrageBase
-from core.web3.wallet_base import WalletBase
-from core.web3.web3_manager import Web3Manager
+from core.web3.executors.executor_base import ExecutorBase
+from core.web3.rpcs.web3_manager import Web3Manager
 
 
 class SimpleStrategy(ArbitrageBase):
-    def __init__(self, web3_manager: Web3Manager, config: Config, pool_finder: PoolFinder, wallet: WalletBase,
+    def __init__(self, web3_manager: Web3Manager, config: Config, pool_finder: PoolFinder, wallet: ExecutorBase,
                  capital_amount: int):
         super().__init__(web3_manager, config)
-        self.watched_pairs: list[WatchedPairSimple] = []
+        # self.watched_pairs: list[WatchedPairSimple] = []
         self.finder = pool_finder
-        self.min_profit = 0.20  # Minimum $ profit to trigger
+        self.min_profit = 0  # Minimum $ profit to trigger
         self.wallet = wallet
         self.capital = capital_amount
         self.config = config
 
         self.watched_pairs_weth = None
 
-        self.init_cache()
+        # self.init_cache()
 
+    """
     def init_cache(self):
         # --- NOVO: CACHE INICIAL ---
         # Mapeamos logo todas as pools possíveis para os pares que queres vigiar
@@ -44,34 +44,27 @@ class SimpleStrategy(ArbitrageBase):
                 self.watched_pairs.append(WatchedPairSimple(addr_a, addr_b, pools_map))
 
         self.build_pool_cache(list(unique_pools))
+    """
 
     def analyze_all_pairs(self):
         """
         Analisa todos os pares configurados num único ciclo de alta velocidade.
         """
         # 1. Recolhe todas as pools ativas para o Batch
-        all_pool_addrs = []
-
-        for pair in self.watched_pairs:
-            all_pool_addrs.extend(list(pair.pools_map.values()))
-
-        # 2. ÚNICO Pedido RPC para todos os preços (com filtro de liquidez e cache interno)
-        current_prices = self.get_quotes_batch(all_pool_addrs)
 
         # 3. Processamento Local (Ultra Rápido)
         for pair in self.watched_pairs:
             opportunity = self.find_cross_dex_spread(
                 pair.addr_a,
                 pair.addr_b,
-                pair.pools_map,
-                current_prices
+                pair.pools_map
             )
             if opportunity:
                 self._execute_trade(opportunity)
                 return True
         return False
 
-    def find_cross_dex_spread(self, token_in, token_out, pools_map, current_prices) -> (DexOpportunitySimple | None):
+    def find_cross_dex_spread(self, token_in, token_out, pools_map) -> (DexOpportunitySimple | None):
         best_opportunity = None
         for dex_buy, pool_buy in pools_map.items():
             p_buy_l = pool_buy.lower()
@@ -81,18 +74,19 @@ class SimpleStrategy(ArbitrageBase):
                 if p_buy_l == p_sell_l: continue
 
                 # BUSCA NO BATCH (Zero RPC)
-                q1 = self._calculate_quote_local(p_buy_l, token_in, token_out, current_prices.get(p_buy_l))
-                q2 = self._calculate_quote_local(p_sell_l, token_out, token_in, current_prices.get(p_sell_l))
+                q1 = self.uniswap_client.calculate_quote_local(p_buy_l, token_in, token_out)
+                q2 = self.uniswap_client.calculate_quote_local(p_sell_l, token_out, token_in)
 
                 if q1 and q2:
-                    price1, dir1, fee1 = q1
-                    price2, dir2, fee2 = q2
+                    price1, dir1, fee1 = q1.price_dex_gross, q1.direction, q1.fee_dex_ppm
+                    price2, dir2, fee2 = q2.price_dex_gross, q2.direction, q2.fee_dex_ppm
 
                     # Simulação de swap
                     step1_res = self.capital * price1 * ((1e6 - fee1) / 1e6) * 0.997
                     final_amount = step1_res * price2 * ((1e6 - fee2) / 1e6) * 0.997
 
-                    gas_cost = self.wallet.get_gas_cost_usd(None)
+                    # gas_cost = self.wallet.get_gas_cost_usd(None)
+                    gas_cost = 0.10
                     net_profit = (final_amount - self.capital) - gas_cost
 
                     if net_profit > (self.capital * 0.20): continue  # Filtro de sanidade
@@ -146,8 +140,10 @@ class SimpleStrategy(ArbitrageBase):
             print(f"💰 [EXECUTION] Sending {opportunity.strategy} trade to Contract!")
 
             # Here you call your WalletManager
+            """
             tx_hash = self.wallet.send_transaction(opportunity.pools,
                                                    opportunity.zero_for_one,
                                                    opportunity.tokens,
                                                    opportunity.amount_in)
+            """
             # print(f"✅ Tx Sent: {tx_hash}")

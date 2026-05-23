@@ -5,23 +5,24 @@ from core.dclass.dex_opportunity_triangular_dclass import DexOpportunityTriangul
 from core.dclass.routes_triangular_dclass import RoutesTriangular
 from core.pools.pool_finder import PoolFinder
 from core.strategies.arbitrage_base import ArbitrageBase
-from core.web3.wallet_base import WalletBase
-from core.web3.web3_manager import Web3Manager
+from core.web3.executors.executor_base import ExecutorBase
+from core.web3.rpcs.web3_manager import Web3Manager
 
 
 class TriangularStrategy(ArbitrageBase):
-    def __init__(self, web3_manager: Web3Manager, config: Config, pool_finder: PoolFinder, wallet: WalletBase,
+    def __init__(self, web3_manager: Web3Manager, config: Config, pool_finder: PoolFinder, wallet: ExecutorBase,
                  capital_amount: int):
         super().__init__(web3_manager, config)
         self.finder = pool_finder
-        self.min_profit = 0.20  # Triangular costs more gas (~$0.25)
+        self.min_profit = 0  # Triangular costs more gas (~$0.25)
         self.routes: list[RoutesTriangular] = self._setup_routes()
         self.wallet = wallet
         self.route_blacklist = {}
-        self.capital = wallet.get_usdc_balance()
+        # self.capital = await wallet.get_usdc_balance()
+        self.capital = 100.0
         self.config = config
 
-        self.init_cache()
+        # self.init_cache()
 
     def init_cache(self):
 
@@ -33,7 +34,7 @@ class TriangularStrategy(ArbitrageBase):
                     unique_pools_for_cache.add(addr.lower())
 
         # Chama o método que criámos na ArbitrageBase
-        self.build_pool_cache(list(unique_pools_for_cache))
+        self.uniswap_client.build_pool_cache(list(unique_pools_for_cache))
 
     def _setup_routes(self):
         """
@@ -44,7 +45,7 @@ class TriangularStrategy(ArbitrageBase):
         tokens_cfg = self.config.tokens
         fees_cfg = self.config.fees
 
-        for triangle in self.get_dynamic_routes(is_triangular=True):
+        for triangle in self.uniswap_client.get_dynamic_routes(is_triangular=True):
             t1, t2, t3 = triangle
             addr1, addr2, addr3 = tokens_cfg.get(t1).address, tokens_cfg.get(t2).address, tokens_cfg.get(t3).address
 
@@ -93,7 +94,7 @@ class TriangularStrategy(ArbitrageBase):
             for addr in step.values(): all_pools_in_route.add(addr.lower())
 
         # 2. ÚNICO pedido RPC para a rota inteira
-        current_prices = self.get_quotes_batch(list(all_pools_in_route))
+        # current_prices = self.uniswap_client.get_quotes_batch(list(all_pools_in_route))
 
         # Brute force through all DEX combinations for the triangle
         for dex1, p1 in pools[0].items():
@@ -108,21 +109,22 @@ class TriangularStrategy(ArbitrageBase):
                         else:
                             del self.route_blacklist[route_id]  # Expulsa da blacklist
 
-                    q1 = self._calculate_quote_local(p1, path[0], path[1], current_prices.get(p1.lower()))
-                    q2 = self._calculate_quote_local(p2, path[1], path[2], current_prices.get(p2.lower()))
-                    q3 = self._calculate_quote_local(p3, path[2], path[3], current_prices.get(p3.lower()))
+                    q1 = self.uniswap_client.calculate_quote_local(p1, path[0], path[1])
+                    q2 = self.uniswap_client.calculate_quote_local(p2, path[1], path[2])
+                    q3 = self.uniswap_client.calculate_quote_local(p3, path[2], path[3])
 
                     if q1 and q2 and q3:
-                        res1, dir1, fee1 = q1
-                        res2, dir2, fee2 = q2
-                        res3, dir3, fee3 = q3
+                        res1, dir1, fee1 = q1.price_dex_gross, q1.direction, q1.fee_dex_ppm
+                        res2, dir2, fee2 = q2.price_dex_gross, q2.direction, q2.fee_dex_ppm
+                        res3, dir3, fee3 = q3.price_dex_gross, q3.direction, q3.fee_dex_ppm
 
                         # Step-by-step simulation
                         step1 = self.capital * res1 * ((1e6 - fee1) / 1e6) * 0.997
                         step2 = step1 * res2 * ((1e6 - fee2) / 1e6) * 0.997
                         final_amount = step2 * res3 * ((1e6 - fee3) / 1e6) * 0.997
 
-                        gas_cost = self.wallet.get_gas_cost_usd(None)  # Ajusta conforme vires o custo real no Arbiscan
+                        gas_cost = 0.10
+                        # gas_cost = self.wallet.get_gas_cost_usd(None)  # Ajusta conforme vires o custo real no Arbiscan
                         net_profit = (final_amount - self.capital) - gas_cost
 
                         # --- FILTRO DE SANIDADE ---
@@ -191,12 +193,13 @@ class TriangularStrategy(ArbitrageBase):
             print(f"💰 [EXECUTION] Sending {opportunity.strategy} trade to Contract!")
 
             # Here you call your WalletManager
-
+            """    
             tx_hash = self.wallet.send_transaction(opportunity.pools,
                                                    opportunity.zero_for_one,
                                                    opportunity.tokens,
                                                    opportunity.amount_in)
-
+            """
+            tx_hash = None
             if tx_hash is None:
                 self.route_blacklist[opportunity.route_id] = time.time() + 300
                 print(f"🚫 Rota {opportunity.route_name} em blacklist devido a falha.")

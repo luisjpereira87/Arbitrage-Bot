@@ -2,10 +2,10 @@ import logging
 
 from core.config.properties_base import PropertiesBase
 from core.dclass.chains_enum import Chains
-from core.web3.wallet_base import WalletBase
+from core.web3.executors.executor_base import ExecutorBase
 
 
-class ArbitrumExecutor(WalletBase):
+class ArbitrumExecutor(ExecutorBase):
     def __init__(self, web3_manager, properties: PropertiesBase):
         self.web3_manager = web3_manager
 
@@ -325,7 +325,7 @@ class ArbitrumExecutor(WalletBase):
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
 
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                             fee: int = 3000, tolerance: float = 0.007, chain=Chains.ARBITRUM):
+                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None):
         """
         Simula o swap na Uniswap V3 de forma dinâmica usando os decimais do Config.
         """
@@ -375,7 +375,8 @@ class ArbitrumExecutor(WalletBase):
             if any(x in str(e).lower() for x in ["401", "429", "500", "timeout"]):
                 logging.warning("🔄 RPC Error detectado no Quoter. Rotacionando...")
                 self.web3_manager.rotate_rpc()
-                return self.is_swap_viable(token_in, token_out, amount_in_usd, expected_out_units, fee, tolerance)
+                return self.is_swap_viable(token_in, token_out, amount_in_usd, expected_out_units, fee, tolerance,
+                                           chain, quote_data)
 
             logging.error(f"❌ Erro na simulação do Quoter: {e}")
             return False, 0

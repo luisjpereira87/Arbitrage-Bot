@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+from abc import ABC
 from typing import Optional
 
 import aiohttp
@@ -12,10 +13,12 @@ from solders.transaction import VersionedTransaction
 
 from core.config.properties_base import PropertiesBase
 from core.config.properties_multi import PropertiesMulti
-from core.web3.solana_manager import SolanaManager
+from core.dclass.chains_enum import Chains
+from core.web3.executors.executor_base import ExecutorBase
+from core.web3.rpcs.solana_manager import SolanaManager
 
 
-class SolanaExecutor():
+class SolanaExecutor(ExecutorBase, ABC):
     def __init__(self, solana_manager: SolanaManager, properties: PropertiesBase):
         self.solana_manager = solana_manager
 
@@ -38,7 +41,7 @@ class SolanaExecutor():
             self.session = aiohttp.ClientSession()
         return self.session
 
-    async def get_token_balance(self, token_address: str) -> int:
+    async def get_token_balance(self, token_address: str, chain: Chains) -> int:
         try:
             if token_address == "So11111111111111111111111111111111111111112":
                 res_sol = await self.solana_manager.solana.get_balance(self.wallet.pubkey())
@@ -78,12 +81,12 @@ class SolanaExecutor():
         except Exception as e:
             if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.solana_manager.rotate_rpc()
-                return await self.get_token_balance(token_address)  # Tenta de novo com novo RPC
+                return await self.get_token_balance(token_address, chain)  # Tenta de novo com novo RPC
             logging.error(f"❌ Erro ao ler saldo na Solana: {e}")
             return 0
 
     async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
-                               amount_usd: float, quote_data: dict = None):
+                               amount_usd: float, chain: Chains, quote_data: dict | None):
 
         # 1. TRATAMENTO DO VALOR
         val_in_raw = int(amount_usd)
@@ -92,7 +95,7 @@ class SolanaExecutor():
         t_address = tokens_list[0]
         w_address = str(self.wallet.pubkey())
 
-        contract_balance = await self.get_token_balance(t_address)
+        contract_balance = await self.get_token_balance(t_address, chain)
 
         print(f"\n--- 🕵️ RELATÓRIO DE EXECUÇÃO SOLANA ---")
         print(f"📍 Wallet: {w_address}")
@@ -154,13 +157,13 @@ class SolanaExecutor():
         except Exception as e:
             if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
                 self.solana_manager.rotate_rpc()
-                return await self.send_transaction(pools_list, dir_list, tokens_list, amount_usd, quote_data)
+                return await self.send_transaction(pools_list, dir_list, tokens_list, amount_usd, chain, quote_data)
 
             print(f"❌ Erro crítico no envio Solana: {e}")
             return None
 
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                             fee: int = 0, tolerance: float = 0.007, quote_data: dict = None):
+                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None) -> tuple[bool, float]:
         try:
             t_in_info = self.config.tokens_by_address.get(token_in.lower())
             t_out_info = self.config.tokens_by_address.get(token_out.lower())
@@ -169,7 +172,7 @@ class SolanaExecutor():
             dec_out = t_out_info.decimals if t_out_info else 6
 
             amount_in_raw = int(amount_in_usd * 10 ** dec_in)
-            balance_raw = await self.get_token_balance(token_in)
+            balance_raw = await self.get_token_balance(token_in, chain)
 
             if balance_raw < amount_in_raw:
                 logging.warning(f"❌ [SOLANA] Saldo insuficiente: {balance_raw} < {amount_in_raw}")
@@ -196,6 +199,15 @@ class SolanaExecutor():
         except Exception as e:
             logging.error(f"❌ Erro na validação Solana: {e}")
             return False, 0
+
+    async def check_and_approve_executor(self, amount_usd: float, chain: Chains) -> bool:
+        return False
+
+    async def get_usdc_balance(self, chain: Chains) -> int:
+        return await self.get_token_balance("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", chain)
+
+    async def get_gas_cost_usd(self, eth_price: (float | None), chain: Chains) -> float:
+        return 0.0
 
 
 class TokenInfo:

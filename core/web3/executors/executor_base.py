@@ -4,7 +4,7 @@ from core.config.properties_base import PropertiesBase
 from core.dclass.chains_enum import Chains
 
 
-class WalletBase(ABC):
+class ExecutorBase(ABC):
     @abstractmethod
     def __init__(self, web3_manager, properties: PropertiesBase):
         pass
@@ -33,5 +33,5 @@ class WalletBase(ABC):
 
     @abstractmethod
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                             fee: int, tolerance: float, chain: Chains) -> tuple[bool, float]:
+                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None) -> tuple[bool, float]:
         pass

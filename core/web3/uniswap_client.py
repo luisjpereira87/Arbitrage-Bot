@@ -1,13 +1,15 @@
+import itertools
 import time
 
 from eth_abi import decode
 
+from core.dclass.chains_enum import Chains
 from core.dclass.config_json import Config
 from core.dclass.dex_quote_dclass import DexQuote
 
 
 class UniswapClient:
-    def __init__(self, web3_manager, config: Config):
+    def __init__(self, web3_manager, config: Config, all_pools_for_cache: list | None, all_pool_addrs: list):
         self.web3_manager = web3_manager
         self.config = config
 
@@ -44,6 +46,11 @@ class UniswapClient:
         self.pool_blacklist = {}
         self.last_batch_results = {}
 
+        self.build_pool_cache(all_pools_for_cache)
+
+        if all_pool_addrs:
+            self.get_quotes_batch(all_pool_addrs)
+
     @property
     def w3(self):
         return self.web3_manager.w3
@@ -52,6 +59,45 @@ class UniswapClient:
         addr = token_address.lower()
         # Fallback to map or default 18
         return self.decimal_map.get(addr, 18)
+
+    def get_dynamic_routes(self, token_base="USDC", is_triangular=False):
+        """
+        Gera rotas simples e triangulares baseadas nos tokens disponíveis
+        e valida se as pools existem no cache estático.
+        """
+        tokens_disponiveis = list(self.config.tokens.keys())
+
+        tokens_disponiveis = [
+            symbol for symbol, info in self.config.tokens.items()
+            if info.chain == Chains.ARBITRUM.value
+            # .value se 'pair.chain' for um Enum, ou apenas 'pair.chain' se for string
+        ]
+
+        # Lista de tokens excluindo o base (ex: USDC)
+        outros_tokens = [t for t in tokens_disponiveis if t != token_base]
+
+        rotas_finais = []
+
+        if is_triangular is not True:
+            # --- 1. ROTAS SIMPLES (Base -> Token -> Base) ---
+            for t in outros_tokens:
+                rota = [token_base, t]
+                rotas_finais.append(rota)
+                if self._check_route_cache(rota):
+                    rotas_finais.append(rota)
+        # --- 2. ROTAS TRIANGULARES (Base -> T1 -> T2 -> Base) ---
+        # Usamos permutations para testar USDC -> ARB -> ETH -> USDC
+        # e também USDC -> ETH -> ARB -> USDC
+        if is_triangular is True:
+            for combo in itertools.permutations(outros_tokens, 2):
+                t1, t2 = combo
+                rota = [token_base, t1, t2]
+                rotas_finais.append(rota)
+                if self._check_route_cache(rota):
+                    rotas_finais.append(rota)
+
+        print(f"🧬 Gerador Dinâmico: {len(rotas_finais)} rotas validadas pelo cache.")
+        return rotas_finais
 
     def _check_route_cache(self, lista_tokens):
         """
@@ -141,8 +187,11 @@ class UniswapClient:
 
         print(f"✅ [CACHE] Sucesso! {len(self.pool_static_cache)} pools prontas para cálculo local.")
 
-    def _calculate_quote_local(self, pool_addr, token_in, token_out, sqrt_price_x96) -> (DexQuote | None):
+    def calculate_quote_local(self, pool_addr, token_in, token_out) -> (DexQuote | None):
         """Calcula o quote usando dados do cache e o preço fornecido."""
+
+        sqrt_price_x96 = self.last_batch_results.get(pool_addr.lower())
+
         if not sqrt_price_x96: return None
 
         data = self.pool_static_cache.get(pool_addr.lower())

@@ -5,8 +5,8 @@ from core.config.properties_dex import PropertiesDex
 from core.pools.pool_finder import PoolFinder
 from core.strategies.simple_strategy import SimpleStrategy
 from core.strategies.triangular_strategy import TriangularStrategy
-from core.web3.arbitrum_executor import WalletManager
-from core.web3.web3_manager import Web3Manager
+from core.web3.executors.arbitrum_executor import ArbitrumExecutor
+from core.web3.rpcs.web3_manager import Web3Manager
 
 
 class ArbitrumBot:
@@ -17,7 +17,7 @@ class ArbitrumBot:
 
         config = properties.CONFIG
 
-        self.wallet = WalletManager(self.web3_manager, properties)
+        self.wallet = ArbitrumExecutor(self.web3_manager, properties)
         self.capital_amount = capital_amount
         self.simple_engine = SimpleStrategy(self.web3_manager, config, self.finder, self.wallet,
                                             self.capital_amount)
@@ -97,16 +97,16 @@ class ArbitrumBot:
             # apenas para monitorização
 
             static_count_simple = len(
-                self.simple_engine.pool_static_cache) if self.simple_engine.pool_static_cache else 0
+                self.simple_engine.get_pool_static_cache()) if self.simple_engine.get_pool_static_cache() else 0
             low_liq_count_simple = len(
-                self.simple_engine.low_liquidity_cache) if self.simple_engine.low_liquidity_cache else 0
+                self.simple_engine.get_low_liquidity_cache()) if self.simple_engine.get_low_liquidity_cache() else 0
 
             alive_pools_simple = static_count_simple - low_liq_count_simple
 
             static_count_triangular = len(
-                self.triangular_engine.pool_static_cache) if self.triangular_engine.pool_static_cache else 0
+                self.triangular_engine.get_pool_static_cache()) if self.triangular_engine.get_pool_static_cache() else 0
             low_liq_count_triangular = len(
-                self.triangular_engine.low_liquidity_cache) if self.triangular_engine.low_liquidity_cache else 0
+                self.triangular_engine.get_low_liquidity_cache()) if self.triangular_engine.get_low_liquidity_cache() else 0
 
             alive_pools_triangular = static_count_triangular - low_liq_count_triangular
 

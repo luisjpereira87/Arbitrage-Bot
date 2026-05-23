@@ -15,16 +15,15 @@ from core.dclass.signal_enum import Signal
 from core.dclass.watched_pair_dclass import WatchedPair
 from core.pools.pool_finder import PoolFinder
 from core.strategies.arbitrage_base import ArbitrageBase
-from core.strategies.watched_pair_builder import WatchedPairBuilder
 from core.utils.trade_position_multi import TradePositionMulti
-from core.web3.wallet_base import WalletBase
+from core.web3.executors.executor_base import ExecutorBase
 
 
 class MultiChainStrategy(ArbitrageBase):
-    def __init__(self, web3_manager, properties: PropertiesMulti, pool_finder: PoolFinder, wallet: WalletBase,
+    def __init__(self, web3_manager, properties: PropertiesMulti, pool_finder: PoolFinder, wallet: ExecutorBase,
                  capital_amount: float):
         super().__init__(web3_manager, properties.CONFIG)
-        self.watched_pairs: list[WatchedPair] = []
+        # self.watched_pairs: list[WatchedPair] = []
         self.finder = pool_finder
         self.wallet = wallet
         # self.capital = wallet.get_usdc_balance()
@@ -50,18 +49,16 @@ class MultiChainStrategy(ArbitrageBase):
         self.blacklist_duration = 300  # 5 minutos de "castigo"
 
         self.active_positions = TradePositionMulti.load_all_positions()
-        self.stop_chain = Chains.ARBITRUM
+        # self.stop_chain = Chains.ARBITRUM
 
-        self.watched_pairs, all_pools_for_cache = WatchedPairBuilder(web3_manager, self.config).build(None)
+        """
+        self.watched_pairs, all_pools_for_cache, all_pool_addrs = WatchedPairBuilder(web3_manager, self.config).build(
+            None)
         self.build_pool_cache(all_pools_for_cache)
 
-        all_pool_addrs = [
-            addr for p in self.watched_pairs
-            if p.chain == Chains.ARBITRUM and getattr(p, 'pools_map', None)
-            for addr in p.pools_map.values()
-        ]
         if all_pool_addrs:
             self.get_quotes_batch(all_pool_addrs)
+        """
 
     async def calculate_all_chains_capital(self) -> dict:
         """
@@ -86,7 +83,8 @@ class MultiChainStrategy(ArbitrageBase):
             pair_modelo = next((p for p in self.watched_pairs if p.chain == chain), None)
             usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
 
-            dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
+            # dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
+            dex_balance_usdc = 50.0
 
             # Filtrar posições ativas desta chain específica
             capital_investido_nesta_dex = sum(
@@ -128,23 +126,12 @@ class MultiChainStrategy(ArbitrageBase):
         symbols_to_fetch = [p.hl_pair for p in self.watched_pairs]
         return await self.exchange.get_multiple_prices(symbols_to_fetch)
 
-    def _update_arbitrum_pool_quotes(self):
-        """Extrai e atualiza os preços das pools da Arbitrum em batch."""
-        all_pool_addrs = [
-            addr for p in self.watched_pairs
-            if p.chain == Chains.ARBITRUM and getattr(p, 'pools_map', None)
-            for addr in p.pools_map.values()
-        ]
-        if all_pool_addrs:
-            self.get_quotes_batch(all_pool_addrs)
-
     async def analyze_all_pairs(self):
         # 1. 🚀 PASSO CRÍTICO: Calcula a banca de todas as chains de uma só vez antes do loop!
         chains_capital = await self.calculate_all_chains_capital()
 
         # 2. Atualiza preços da Hyperliquid e da Arbitrum (Dados frescos para este ciclo)
         all_prices_hl = await self._fetch_hyperliquid_prices()
-        # self._update_arbitrum_pool_quotes()
 
         # 3. Estimar custos de gás (Exemplo Arbitrum)
         eth_price = all_prices_hl.get('ETH/USDC:USDC').bid if 'ETH/USDC:USDC' in all_prices_hl else 3000.0
@@ -413,7 +400,8 @@ class MultiChainStrategy(ArbitrageBase):
             expected_out_units=expected_units,
             fee=dex_fee,
             tolerance=0.001,
-            chain=pair.chain
+            chain=pair.chain,
+            quote_data=data_quote
         )
 
         # CÁLCULO DO VALOR REAL QUE VAI SER EXECUTADO
@@ -565,7 +553,8 @@ class MultiChainStrategy(ArbitrageBase):
             expected_out_units=expected_usdc,
             fee=dex_fee,
             tolerance=0.003,  # 1.5% de tolerância para garantir a saída
-            chain=pair.chain
+            chain=pair.chain,
+            quote_data=data_quote
         )
 
         if not viable:

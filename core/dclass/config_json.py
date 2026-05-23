@@ -24,7 +24,7 @@ class Config:
 
         # 1. Mapear Tokens
         self.tokens = {
-            sym: TokenInfo(symbol=sym, address=info["addr"], decimals=info["dec"])
+            sym: TokenInfo(symbol=sym, address=info["addr"], decimals=info["dec"], chain=info["chain"])
             for sym, info in data["tokens"].items()
         }
 
@@ -61,3 +61,4 @@ class TokenInfo:
     symbol: str
     address: str
     decimals: int
+    chain: str
