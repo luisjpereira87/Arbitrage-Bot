@@ -49,16 +49,6 @@ class MultiChainStrategy(ArbitrageBase):
         self.blacklist_duration = 300  # 5 minutos de "castigo"
 
         self.active_positions = TradePositionMulti.load_all_positions()
-        # self.stop_chain = Chains.ARBITRUM
-
-        """
-        self.watched_pairs, all_pools_for_cache, all_pool_addrs = WatchedPairBuilder(web3_manager, self.config).build(
-            None)
-        self.build_pool_cache(all_pools_for_cache)
-
-        if all_pool_addrs:
-            self.get_quotes_batch(all_pool_addrs)
-        """
 
     async def calculate_all_chains_capital(self) -> dict:
         """
@@ -84,6 +74,7 @@ class MultiChainStrategy(ArbitrageBase):
             usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
 
             dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
+            # dex_balance_usdc = 50.0
 
             # Filtrar posições ativas desta chain específica
             capital_investido_nesta_dex = sum(
@@ -131,6 +122,7 @@ class MultiChainStrategy(ArbitrageBase):
 
         # 2. Atualiza preços da Hyperliquid e da Arbitrum (Dados frescos para este ciclo)
         all_prices_hl = await self._fetch_hyperliquid_prices()
+        # self._update_arbitrum_pool_quotes()
 
         # 3. Estimar custos de gás (Exemplo Arbitrum)
         eth_price = all_prices_hl.get('ETH/USDC:USDC').bid if 'ETH/USDC:USDC' in all_prices_hl else 3000.0
