@@ -83,8 +83,7 @@ class MultiChainStrategy(ArbitrageBase):
             pair_modelo = next((p for p in self.watched_pairs if p.chain == chain), None)
             usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
 
-            # dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
-            dex_balance_usdc = 50.0
+            dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
 
             # Filtrar posições ativas desta chain específica
             capital_investido_nesta_dex = sum(
@@ -195,59 +194,6 @@ class MultiChainStrategy(ArbitrageBase):
                 return True
         await asyncio.sleep(1.0)
         return True
-
-    """
-    async def analyze_all_pairs(self):
-
-        symbols_to_fetch = [p.hl_pair for p in self.watched_pairs]
-        all_prices_hl = await self.exchange.get_multiple_prices(symbols_to_fetch)
-
-        # 4. Se chegámos aqui, ou temos saldo ou temos posições para gerir!
-        eth_price = all_prices_hl['ETH/USDC:USDC'].bid
-        gas_cost_usdc = await self.wallet.get_gas_cost_usd(eth_price, Chains.ARBITRUM)
-
-        # 5. Recolher preços em Batch
-
-        all_pool_addrs = []
-        for pair in self.watched_pairs:
-            if pair.chain == Chains.ARBITRUM:
-                all_pool_addrs.extend(pair.pools_map.values())
-        # current_prices = self.get_quotes_batch(all_pool_addrs)
-
-        # 6. LOOP DE DECISÃO
-        for pair in self.watched_pairs:
-            active_tokens, usdc_balance_to_trade, total_balance_usdc = await self.calculate_capital(pair.chain)
-
-            symbol_base = pair.symbol_b  # Ex: "ARB"
-            active_position = None
-            if symbol_base in self.active_positions:
-                # Passas a posição específica para o manage_orders
-                active_position = self.active_positions[symbol_base]
-            elif len(self.active_positions) < self.max_slots:
-                active_position = None
-
-            price_data = all_prices_hl[pair.hl_pair]
-            if not price_data or price_data.bid is None:
-                logging.warning(f"⚠️ Sem dados para {pair.hl_pair}, saltando...")
-                continue
-
-            hl_price = price_data.bid
-
-            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade, gas_cost_usdc)
-
-            if not opportunity:
-                continue
-
-            # O manage_orders agora decide se fecha o que existe ou abre o que falta
-            success = await self.manage_orders(opportunity, active_position, pair, usdc_balance_to_trade,
-                                               total_balance_usdc,
-                                               hl_price)
-            if success:
-                logging.info(f"✅ Executar trasação para {pair.symbol_b}. Parando ciclo para atualizar saldos.")
-                return True  # Sai do analyze_all_pairs imediatamente
-
-        return True
-    """
 
     async def manage_orders(self, opportunity: DexOpportunity, active_position: ActivePosition,
                             watched_pair: WatchedPair, usdc_balance_to_trade: float,
@@ -620,30 +566,6 @@ class MultiChainStrategy(ArbitrageBase):
             return True
 
         return False
-
-    """
-    async def get_all_balances(self):
-        # Usamos um Set para endereços já consultados (mais rápido que List)
-        processed_addresses = set()
-        # Dicionário final: {"USDC": 100.0, "ETH": 0.5, ...}
-        balances = {}
-        for pair in self.watched_pairs:
-            # Verifica Token A (t_in)
-            t_in = pair.addr_a
-            t_out = pair.addr_b
-            if t_in not in processed_addresses:
-                raw_in = await self.wallet.get_token_balance(token_address=t_in, chain=pair.chain)
-                balances[pair.chain.value][pair.symbol_a] = self.normalize_amount(raw_in, pair.decimal_a)
-                processed_addresses.add(t_in)
-
-            if t_out not in processed_addresses:
-                raw_out = await self.wallet.get_token_balance(token_address=t_out, chain=pair.chain)
-                balances[pair.chain.value][pair.symbol_b] = self.normalize_amount(raw_out, pair.decimal_b)
-                processed_addresses.add(t_out)
-
-        balances["hl"] = await self.exchange.get_available_balance()
-        return balances
-    """
 
     async def get_all_balances(self):
         # 1. Usamos o Set para rastrear o que precisamos de consultar (evita duplicados)

@@ -23,13 +23,13 @@ class ArbitrageBase:
         self.tokens = self.config.tokens
 
         self.session = None
-        self.pool_blacklist = {}
+        self.pool_blacklist: dict = {}
         # self.last_batch_results = {}
 
         self.watched_pairs: list[WatchedPair] = []
 
         self.watched_pairs, all_pools_for_cache, all_pool_addrs = WatchedPairBuilder(web3_manager, self.config).build(
-            None)
+            Chains.ARBITRUM)
 
         self.uniswap_client = UniswapClient(self.web3_manager, self.config, all_pools_for_cache, all_pool_addrs)
 
