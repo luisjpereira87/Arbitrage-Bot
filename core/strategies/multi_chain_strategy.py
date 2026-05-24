@@ -106,7 +106,8 @@ class MultiChainStrategy(ArbitrageBase):
             logging.info(
                 f"📊 [BANCA CALCULADA] {chain.value.upper()} | "
                 f"DEX USDC: {dex_balance_usdc:.2f} | Slot Alocado: {usdc_balance_to_trade:.2f} | "
-                f"Tokens: {active_tokens}"
+                f"Tokens: {active_tokens} | "
+                f"HL USDC: {hl_balance_usdc}"
             )
 
         return chains_capital
