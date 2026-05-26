@@ -360,7 +360,7 @@ class MultiChainStrategy(ArbitrageBase):
         # Importante: usar o valor que a liquidez permite, convertido para Wei
         usdc_wei = int(actual_trade_value_usdc * (10 ** pair.decimal_a))
 
-        tx_hash = self.wallet.send_transaction(
+        tx_hash = await self.wallet.send_transaction(
             pools_list=[selected_pool],
             dir_list=[direction],
             tokens_list=[pair.addr_a, pair.addr_b],
