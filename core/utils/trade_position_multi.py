@@ -73,7 +73,7 @@ class TradePositionMulti:
             logging.info(f"🧹 Arquivo {file_path.name} removido (Trade concluído).")
 
     @staticmethod
-    def check_exit_profitability(pos: ActivePosition, current_dex_price: float, current_hl_price: float):
+    def check_exit_profitability_(pos: ActivePosition, current_dex_price: float, current_hl_price: float):
         # Lógica de lucro (mantém-se igual, apenas certifica que os nomes batem com o ActivePosition)
         current_dex_value = (pos.units_dex * current_dex_price) * 0.997
 
@@ -84,3 +84,22 @@ class TradePositionMulti:
 
         total_now = current_dex_value + current_hl_value
         return total_now - pos.total_balance_before_usd
+
+    @staticmethod
+    def check_exit_profitability(pos: ActivePosition, current_dex_price: float, current_hl_price: float):
+        # 1. Valor atual na DEX com desconto de taxa estimado (0.3% / 0.997)
+        current_dex_value = (pos.units_dex * current_dex_price) * 0.997
+    
+        # 2. PnL da Hyperliquid (Short)
+        units_hl = pos.initial_balance_hl_usd / pos.entry_price_hl
+        pnl_hl = (pos.entry_price_hl - current_hl_price) * units_hl
+        current_hl_value = pos.initial_balance_hl_usd + pnl_hl
+    
+        # 3. Capital total que tens AGORA nas duas pontas combinadas
+        total_now = current_dex_value + current_hl_value
+        
+        # 4. Capital total que INVESTISTE nesta operação no momento da entrada
+        total_investido_entrada = pos.initial_balance_dex_usd + pos.initial_balance_hl_usd
+    
+        # O Lucro Real desta operação isolada é o que tens agora menos o que investiste
+        return total_now - total_investido_entrada
