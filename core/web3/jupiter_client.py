@@ -40,7 +40,8 @@ class JupiterClient:
         self.last_jup_call = time.time()
 
     async def get_quote(self, addr_in: str, addr_out: str, amount_in_human: float, decimals_in: int,
-                        decimals_out: int) -> Optional[DexQuote]:
+                        decimals_out: int, exclude_direct_route=False,
+                        restrict_intermediate_tokens=False) -> Optional[DexQuote]:
         """
         Consulta a API da Jupiter tratando internamente Rate Limits, Timeouts e parsing de rotas.
         """
@@ -58,7 +59,9 @@ class JupiterClient:
             "outputMint": addr_out,
             "amount": str(amount_in_base),
             "slippageBps": "10",
-            "restrictIntermediateTokens": "false"
+            # "excludeDirectRoute": "false"
+            "excludeDirectRoute": "true" if exclude_direct_route else "false",
+            "restrictIntermediateTokens": "true" if restrict_intermediate_tokens else "false"
         }
         headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
 

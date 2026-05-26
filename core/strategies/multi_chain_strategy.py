@@ -24,7 +24,6 @@ class MultiChainStrategy(ArbitrageBase):
                  capital_amount: float):
         super().__init__(web3_manager, properties.CONFIG)
         # self.watched_pairs: list[WatchedPair] = []
-        self.finder = pool_finder
         self.wallet = wallet
         # self.capital = wallet.get_usdc_balance()
         self.config = properties.CONFIG

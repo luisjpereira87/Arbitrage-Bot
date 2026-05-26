@@ -34,8 +34,8 @@ if __name__ == '__main__':
     # abi = load_abi()
 
     # --- EXECUÇÃO -
-    # arbitrum_bot = ArbitrumBot(properties_dex)
-    # arbitrum_bot.run_parallel()
+    # solana_bot = SolanaBot()
+    # asyncio.run(solana_bot.scan_jupiter_triangles())
     # TradePosition.empty_position()
     multi_chain_bot = MultiChainBot(properties_multi)
     asyncio.run(multi_chain_bot.run())

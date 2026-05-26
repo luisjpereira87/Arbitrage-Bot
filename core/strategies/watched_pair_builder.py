@@ -1,5 +1,3 @@
-from typing import Any
-
 from core.dclass.chains_enum import Chains
 from core.dclass.config_json import Config
 from core.dclass.watched_pair_dclass import WatchedPair
@@ -13,16 +11,12 @@ class WatchedPairBuilder:
         self.finder = PoolFinder(self.web3_manager)
         self.config = config
 
-    def build(self, stop_chain: Chains | None) -> tuple[list[WatchedPair], list[Any], list[str]] | tuple[
-        list[Any], None, list[str]]:
+    def build(self) -> list[WatchedPair]:
         all_pools_for_cache = set()
         watched_pairs = []
         fee_tiers = self.config.fees
 
         for symbol_a, symbol_b, hl_pair, chain in self.config.multi_chain:
-
-            if stop_chain is not None and chain == stop_chain.value:
-                continue
 
             # 1. Obter dados do token (mantendo case-sensitive para Solana)
             token_a_data = self.config.tokens.get(symbol_a)
@@ -84,14 +78,4 @@ class WatchedPairBuilder:
                     chain=Chains.from_str(chain),
                 ))
 
-        all_pool_addrs = [
-            addr for p in watched_pairs
-            if p.chain == Chains.ARBITRUM and getattr(p, 'pools_map', None)
-            for addr in p.pools_map.values()
-        ]
-
-        # O build_pool_cache só precisa de rodar para as pools EVM (Arbitrum)
-        if all_pools_for_cache:
-            return watched_pairs, list(all_pools_for_cache), all_pool_addrs
-
-        return watched_pairs, None, all_pool_addrs
+        return watched_pairs

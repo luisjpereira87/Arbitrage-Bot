@@ -8,6 +8,7 @@ from core.dclass.dex_quote_dclass import DexQuote
 from core.dclass.watched_pair_dclass import WatchedPair
 from core.strategies.watched_pair_builder import WatchedPairBuilder
 from core.web3.jupiter_client import JupiterClient
+from core.web3.uniswap_client import UniswapClient
 
 
 class ArbitrageBase:
@@ -16,6 +17,7 @@ class ArbitrageBase:
         self.config = config
 
         self.jupiter_client = JupiterClient()
+        self.uniswap_client = UniswapClient(self.web3_manager, self.config)
 
         # self.pool_static_cache = {}
 
@@ -27,10 +29,7 @@ class ArbitrageBase:
 
         self.watched_pairs: list[WatchedPair] = []
 
-        self.watched_pairs, all_pools_for_cache, all_pool_addrs = WatchedPairBuilder(web3_manager, self.config).build(
-            Chains.ARBITRUM)
-
-        # self.uniswap_client = UniswapClient(self.web3_manager, self.config, all_pools_for_cache, all_pool_addrs)
+        self.watched_pairs = WatchedPairBuilder(web3_manager, self.config).build()
 
         self.name_map = {
             info.address.lower(): name
