@@ -300,7 +300,7 @@ class MultiChainStrategy(ArbitrageBase):
                 # Em vez de inventar o 'step' com o factor, usamos a precisão da própria exchange
                 # No CCXT, a variação mínima (tick size do amount) está em market['limits']['amount']['min'] ou market['precision']['amount']
                 # Para evitar bugs, vamos apenas reduzir 1% da quantidade para garantir que cabe no orçamento
-                clean_qty = float(self.hl.amount_to_precision(hl_pair, clean_qty * 0.99))
+                clean_qty = float(self.hl.amount_to_precision(hl_pair, clean_qty * 0.98))
                 adjust_balance = clean_qty * dex_price * 1.003
     
             # 7. Segurança máxima: Se depois de tudo a quantidade for zero, não podemos operar
