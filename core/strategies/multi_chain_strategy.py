@@ -278,42 +278,43 @@ class MultiChainStrategy(ArbitrageBase):
             if hl_pair not in self.hl.markets:
                 logging.warning(f"⚠️ Par {hl_pair} não carregado. A tentar usar valor bruto.")
                 return usdc_balance_to_trade
-    
+
             market = self.hl.market(hl_pair)
-    
+
             # 2. Calcular quantidade bruta de tokens (Ex: 24.85 / 50.24 = 0.49462)
             raw_qty = usdc_balance_to_trade / dex_price
-    
+
             # 3 e 4. Deixar o CCXT tratar o arredondamento de forma nativa e segura
             # O método 'amount_to_precision' da exchange sabe EXATAMENTE como a HL quer o número.
             # Forçamos a conversão para float para podermos fazer contas matemáticas a seguir.
             clean_qty = float(self.hl.amount_to_precision(hl_pair, raw_qty))
-    
+
             # 5. Calcular o custo em USD para comprar essa quantidade com a margem de 0.3%
             adjust_balance = clean_qty * dex_price * 1.003
-    
+
             # 6. Validação de teto de gastos: se a margem de 0.3% ultrapassou o teu slot disponível
             if adjust_balance > usdc_balance_to_trade:
                 logging.warning(f"⚠️ Ajuste excedeu balance original para {symbol_b}. Recalculando...")
-                
+
                 # Em vez de inventar o 'step' com o factor, usamos a precisão da própria exchange
                 # No CCXT, a variação mínima (tick size do amount) está em market['limits']['amount']['min'] ou market['precision']['amount']
                 # Para evitar bugs, vamos apenas reduzir 1% da quantidade para garantir que cabe no orçamento
                 clean_qty = float(self.hl.amount_to_precision(hl_pair, clean_qty * 0.98))
                 adjust_balance = clean_qty * dex_price * 1.003
-    
+
             # 7. Segurança máxima: Se depois de tudo a quantidade for zero, não podemos operar
             if clean_qty <= 0:
-                logging.warning(f"🚫 [PRECISÃO {symbol_b}] Quantidade calculada é zero. Saldo insuficiente para o preço do token.")
+                logging.warning(
+                    f"🚫 [PRECISÃO {symbol_b}] Quantidade calculada é zero. Saldo insuficiente para o preço do token.")
                 return 0.0
-    
+
             logging.info(
                 f"🎯 [PRECISÃO {symbol_b}] Qtd: {clean_qty} | "
                 f"USD Original: ${usdc_balance_to_trade:.2f} | USD Ajustado: ${adjust_balance:.4f}"
             )
-    
+
             return adjust_balance
-    
+
         except Exception as e:
             logging.error(f"💥 Erro no adjust_balance para {symbol_b}: {e}")
             return 0.0
@@ -383,7 +384,7 @@ class MultiChainStrategy(ArbitrageBase):
             amount_in_usd=amount_usdc_to_trade,
             expected_out_units=expected_units,
             fee=dex_fee,
-            tolerance=0.001,
+            tolerance=0.003,
             chain=pair.chain,
             quote_data=data_quote
         )
@@ -419,7 +420,7 @@ class MultiChainStrategy(ArbitrageBase):
             return False
 
         logging.info(f"⏳ Aguardando confirmação DEX (Hash: {tx_hash})...")
-        #await asyncio.sleep(3)  # Aumentado para 3s para dar folga ao RPC
+        # await asyncio.sleep(3)  # Aumentado para 3s para dar folga ao RPC
 
         # 4. Hedge na Hyperliquid (Usando o MESMO valor que entrou na DEX)
         try:

@@ -291,6 +291,48 @@ class SolanaExecutor(ExecutorBase, ABC):
                 logging.error("❌ Erro: quote_data da Jupiter é obrigatório para validação na Solana")
                 return False, 0
 
+            # O que a Jupiter nos garante dar na blockchain real
+            amount_out_raw = int(quote_data['outAmount'])
+            amount_out_real = amount_out_raw / 10 ** dec_out
+
+            # Aplicamos a tolerância passada (ex: 0.003 para 0.3% de folga)
+            # Se o Short pede 12.825, com 0.3% aceitamos até 12.787
+            min_acceptable = expected_out_units * (1 - tolerance)
+
+            if amount_out_real < min_acceptable:
+                # IMPRIMIMOS O MIN_ACCEPTABLE REAL COM DESCONTO PARA SABERES O LIMITE VERDADEIRO
+                logging.warning(
+                    f"⚠️ Swap REJEITADO (SOLANA): Real {amount_out_real:.6f} < Min Tolerável {min_acceptable:.6f} (HL pedia: {expected_out_units:.6f})")
+                return False, amount_out_real
+
+            logging.info(
+                f"✅ Swap validado (SOLANA): Receberás aprox. {amount_out_real:.6f} {t_out_info.symbol if t_out_info else ''} (Min aceitável era: {min_acceptable:.6f})")
+            return True, amount_out_real
+
+        except Exception as e:
+            logging.error(f"❌ Erro na validação Solana: {e}")
+            return False, 0
+
+    async def is_swap_viable_(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
+                              fee: int, tolerance: float, chain: Chains, quote_data: dict | None) -> tuple[bool, float]:
+        try:
+            t_in_info = self.config.tokens_by_address.get(token_in.lower())
+            t_out_info = self.config.tokens_by_address.get(token_out.lower())
+
+            dec_in = t_in_info.decimals if t_in_info else 9
+            dec_out = t_out_info.decimals if t_out_info else 6
+
+            amount_in_raw = int(amount_in_usd * 10 ** dec_in)
+            balance_raw = await self.get_token_balance(token_in, chain)
+
+            if balance_raw < amount_in_raw:
+                logging.warning(f"❌ [SOLANA] Saldo insuficiente: {balance_raw} < {amount_in_raw}")
+                return False, 0
+
+            if not quote_data:
+                logging.error("❌ Erro: quote_data da Jupiter é obrigatório para validação na Solana")
+                return False, 0
+
             amount_out_raw = int(quote_data['outAmount'])
             amount_out_real = amount_out_raw / 10 ** dec_out
 
