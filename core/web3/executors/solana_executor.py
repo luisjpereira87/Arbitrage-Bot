@@ -114,6 +114,115 @@ class SolanaExecutor(ExecutorBase, ABC):
                 return None
         print(f"---------------------------------\n")
 
+        # Lista de endpoints de contingência da Jupiter (Plano A e Plano B)
+        jupiter_endpoints = [
+            "https://quote-api.jup.ag/v6/swap",
+            "https://api.jup.ag/swap/v6/swap"
+        ]
+
+        max_jupiter_retries = 3
+        for attempt in range(max_jupiter_retries):
+            try:
+                if not quote_data:
+                    print("❌ ERRO: quote_data da Jupiter é necessário para execução na Solana.")
+                    return None
+
+                # 2. Construção da Transação via Jupiter com Alternância de URL
+                # Se attempt = 0 -> usa quote-api.jup.ag
+                # Se attempt = 1 -> usa api.jup.ag (Plano B de DNS/Infraestrutura)
+                swap_url = jupiter_endpoints[attempt % len(jupiter_endpoints)]
+
+                payload = {
+                    "quoteResponse": quote_data,
+                    "userPublicKey": w_address,
+                    "wrapAndUnwrapSol": True,
+                    "dynamicComputeUnitLimit": True,
+                    "prioritizationFeeLamports": self.priority_fee
+                }
+
+                session = self._get_session()
+                # Timeout estrito de 2 segundos para o bot não congelar se a JUP engasgar
+                async with session.post(swap_url, json=payload, timeout=2.0) as resp:
+                    if resp.status != 200:
+                        print(f"⚠️ Falha ao construir swap Jupiter em {swap_url}: {await resp.text()}")
+                        if resp.status in [429, 500, 503]:
+                            raise Exception(f"HTTP_{resp.status}")
+                        return None
+                    swap_res = await resp.json()
+                    tx_base64 = swap_res['swapTransaction']
+
+                # 3. Assinatura (Corrigido para passar bytes puros)
+                raw_tx = base64.b64decode(tx_base64)
+                v_tx = VersionedTransaction.from_bytes(raw_tx)
+
+                # Passamos a mensagem convertida em bytes puros
+                signature = self.wallet.sign_message(bytes(v_tx.message))
+                v_tx.signatures = [signature]
+
+                # 4. Envio (Em modo 'processed' ultra-rápido!)
+                opts = TxOpts(skip_preflight=True, preflight_commitment=Commitment("processed"))
+                res = await self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
+
+                tx_hash = str(res.value)
+                print(f"🚀 Enviado Solana! Hash: {tx_hash}")
+
+                return tx_hash
+
+            except Exception as e:
+                error_str = str(e).lower()
+
+                # Deteta erros de rede como DNS, timeouts, recusas de conexão ou erros de servidor
+                is_network_error = any(x in error_str for x in [
+                    "clientconnectorerror", "dns", "timeout", "cannot connect",
+                    "401", "429", "403", "500", "503", "unauthorized", "http_"
+                ])
+
+                if is_network_error and attempt < max_jupiter_retries - 1:
+                    next_url = jupiter_endpoints[(attempt + 1) % len(jupiter_endpoints)]
+                    print(f"⚠️ [TENTATIVA {attempt + 1}/{max_jupiter_retries}] Falha de rede/DNS na Jupiter: {e}.")
+                    print(f"🔄 Alternando rota para: {next_url} em 150ms...")
+                    await asyncio.sleep(0.15)
+                    continue  # Salta para a próxima iteração do loop 'for' (tentativa seguinte)
+
+                elif is_network_error:
+                    # Se esgotou as rotas locais da Jupiter, roda o teu RPC e faz nova tentativa recursiva limpa
+                    print(f"🚨 Esgotadas as rotas de contingência da Jupiter. Rotacionando RPC e reiniciando envio...")
+                    self.solana_manager.rotate_rpc()
+                    return await self.send_transaction(pools_list, dir_list, tokens_list, amount_usd, chain, quote_data)
+
+                # Se for um erro lógico não-corrigível (ex: Slippage estourou na simulação local, erro de assinatura, etc.)
+                print(f"❌ Erro crítico no envio Solana (Não corrigível automaticamente): {e}")
+                return None
+
+    async def send_transaction_(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
+                                amount_usd: float, chain: Chains, quote_data: dict | None):
+
+        # 1. TRATAMENTO DO VALOR
+        val_in_raw = int(amount_usd)
+
+        # --- DEBUG/REPORTE ESTILO MAINNET ---
+        t_address = tokens_list[0]
+        w_address = str(self.wallet.pubkey())
+
+        contract_balance = await self.get_token_balance(t_address, chain)
+
+        print(f"\n--- 🕵️ RELATÓRIO DE EXECUÇÃO SOLANA ---")
+        print(f"📍 Wallet: {w_address}")
+        print(f"🪙 Token: {t_address}")
+        print(f"🔢 Saldo Bruto: {contract_balance}")
+        print(f"💰 Saldo Formatado: {contract_balance / 10 ** 6:.4f}")
+        print(f"📉 Pedido p/ Swap: {val_in_raw}")
+
+        if contract_balance < val_in_raw:
+            diff = val_in_raw - contract_balance
+            if diff < 100000:
+                print(f"⚠️ Diferença mínima ({diff}). Ajustando para saldo total.")
+                val_in_raw = contract_balance
+            else:
+                print(f"❌ ERRO: Saldo insuficiente real! ({contract_balance} < {val_in_raw})")
+                return None
+        print(f"---------------------------------\n")
+
         try:
             if not quote_data:
                 print("❌ ERRO: quote_data da Jupiter é necessário para execução na Solana.")
