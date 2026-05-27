@@ -420,7 +420,7 @@ class MultiChainStrategy(ArbitrageBase):
             return False
 
         logging.info(f"⏳ Aguardando confirmação DEX (Hash: {tx_hash})...")
-        await asyncio.sleep(3)  # Aumentado para 3s para dar folga ao RPC
+        #await asyncio.sleep(3)  # Aumentado para 3s para dar folga ao RPC
 
         # 4. Hedge na Hyperliquid (Usando o MESMO valor que entrou na DEX)
         try:
