@@ -15,7 +15,7 @@ class JupiterClient:
         self.last_jup_call = 0.0
 
         self.jupiter_urls = [
-            "https://api.jup.ag/quote",          # <-- 1ª Opção: O URL correto da doc (Sem o v6 no meio para evitar o 404)
+            "https://public.jupiterapi.com/quote",          # <-- 1ª Opção: O URL correto da doc (Sem o v6 no meio para evitar o 404)
             "https://quote-api.jup.ag/v6/quote"  # <-- 2ª Opção: Mantém-se como fallback caso o IP do Railway seja libertado
         ]
 
