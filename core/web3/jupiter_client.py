@@ -15,8 +15,8 @@ class JupiterClient:
         self.last_jup_call = 0.0
 
         self.jupiter_urls = [
-            "https://public.jupiterapi.com/quote",
-            "https://quote-api.jup.ag/v6/quote"
+            "https://quote-api.jup.ag/v6/quote",  # <-- Principal (Oficial)
+            "https://api.jup.ag/swap/v6/quote"   # <-- Failover (Oficial da Documentação)
         ]
 
     async def init_session(self) -> aiohttp.ClientSession:
