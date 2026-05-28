@@ -116,7 +116,7 @@ class SolanaExecutor(ExecutorBase, ABC):
 
         # Lista de endpoints de contingência da Jupiter (Plano A e Plano B)
         jupiter_endpoints = [
-            "https://quote-api.jup.ag/v6/swap",
+            "https://public.jupiterapi.com/swap",
             "https://api.jup.ag/swap/v6/swap"
         ]
 
