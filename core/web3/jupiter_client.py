@@ -15,8 +15,8 @@ class JupiterClient:
         self.last_jup_call = 0.0
 
         self.jupiter_urls = [
-            "https://quote-api.jup.ag/v6/quote",  # <-- Principal (Oficial)
-            "https://api.jup.ag/swap/v6/quote"   # <-- Failover (Oficial da Documentação)
+            "https://api.jup.ag/v6/quote",       # <-- O endpoint oficial e blindado da documentação
+            "https://quote-api.jup.ag/v6/quote"  # <-- O secundário pública (caso o bloqueio de DNS passe)
         ]
 
     async def init_session(self) -> aiohttp.ClientSession:
