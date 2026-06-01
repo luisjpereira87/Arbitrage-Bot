@@ -137,7 +137,7 @@ class SolanaExecutor(ExecutorBase, ABC):
                     "userPublicKey": w_address,
                     "wrapAndUnwrapSol": True,
                     "dynamicComputeUnitLimit": True,
-                    "prioritizationFeeLamports": self.priority_fee
+                    "prioritizationFeeLamports": self.priority_fee,
                     "feeAccount": None
                 }
 
