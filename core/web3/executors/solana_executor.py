@@ -138,6 +138,7 @@ class SolanaExecutor(ExecutorBase, ABC):
                     "wrapAndUnwrapSol": True,
                     "dynamicComputeUnitLimit": True,
                     "prioritizationFeeLamports": self.priority_fee
+                    "feeAccount": None
                 }
 
                 session = self._get_session()
