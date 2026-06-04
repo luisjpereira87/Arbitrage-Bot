@@ -10,11 +10,13 @@ RPC_ALCHEMY_SOLANA_URL = os.getenv("RPC_ALCHEMY_SOLANA_URL")
 RPC_ANKR_SOLANA_URL = os.getenv("RPC_ANKR_SOLANA_URL")
 RPC_INFURA_SOLANA_URL = os.getenv("RPC_INFURA_SOLANA_URL")
 RPC_MAINNET_BETA_SOLANA_URL = os.getenv("RPC_MAINNET_BETA_SOLANA_URL")
+RPC_HELIUS_SOLANA_URL = os.getenv("RPC_HELIUS_SOLANA_URL")
 
 
 class SolanaManager:
     def __init__(self):
         self.rpcs = [
+            RPC_HELIUS_SOLANA_URL,
             RPC_ALCHEMY_SOLANA_URL,
             RPC_INFURA_SOLANA_URL,
             RPC_MAINNET_BETA_SOLANA_URL,
