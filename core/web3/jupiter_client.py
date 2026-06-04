@@ -15,8 +15,10 @@ class JupiterClient:
         self.last_jup_call = 0.0
 
         self.jupiter_urls = [
-            "https://public.jupiterapi.com/quote",          # <-- 1ª Opção: O URL correto da doc (Sem o v6 no meio para evitar o 404)
-            "https://quote-api.jup.ag/v6/quote"  # <-- 2ª Opção: Mantém-se como fallback caso o IP do Railway seja libertado
+            "https://public.jupiterapi.com/quote",
+            # <-- 1ª Opção: O URL correto da doc (Sem o v6 no meio para evitar o 404)
+            "https://quote-api.jup.ag/v6/quote"
+            # <-- 2ª Opção: Mantém-se como fallback caso o IP do Railway seja libertado
         ]
 
     async def init_session(self) -> aiohttp.ClientSession:
@@ -58,7 +60,7 @@ class JupiterClient:
             "inputMint": addr_in,
             "outputMint": addr_out,
             "amount": str(amount_in_base),
-            "slippageBps": "10",
+            "slippageBps": "100",
             # "excludeDirectRoute": "false"
             "excludeDirectRoute": "true" if exclude_direct_route else "false",
             "restrictIntermediateTokens": "true" if restrict_intermediate_tokens else "false"

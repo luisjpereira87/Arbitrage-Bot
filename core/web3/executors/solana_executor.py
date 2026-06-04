@@ -28,7 +28,8 @@ class SolanaExecutor(ExecutorBase, ABC):
         self.wallet = Keypair.from_base58_string(properties.PRIVATE_KEY_WALLET_SOLANA)
         self.config = properties.CONFIG
         self.session: Optional[aiohttp.ClientSession] = None
-        self.priority_fee = 50000  # Lamports (~$0.01)
+        # self.priority_fee = 50000  # Lamports (~$0.01)
+        self.priority_fee = 1500000
 
     @property
     def w3(self):
@@ -88,6 +89,126 @@ class SolanaExecutor(ExecutorBase, ABC):
     async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
                                amount_usd: float, chain: Chains, quote_data: dict | None):
 
+        # 1. TRATAMENTO DO VALOR E SALDO
+        val_in_raw = int(amount_usd)
+        t_address = tokens_list[0]
+        w_address = str(self.wallet.pubkey())
+
+        try:
+            contract_balance = await self.get_token_balance(t_address, chain)
+        except Exception as e:
+            print(f"❌ [PROD] Falha ao ler saldo no nó: {e}")
+            return None
+
+        if contract_balance < val_in_raw:
+            diff = val_in_raw - contract_balance
+            if diff < 100000:  # Tolerância de poeira (micro-ajuste)
+                val_in_raw = contract_balance
+            else:
+                print(f"❌ [PROD] Saldo insuficiente abortado: {contract_balance} < {val_in_raw}")
+                return None
+
+        # Endpoints de contingência
+        jupiter_endpoints = [
+            "https://public.jupiterapi.com/swap",
+            "https://api.jup.ag/swap/v6/swap"  # Endpoint principal v6 oficial
+        ]
+
+        max_jupiter_retries = 3
+        for attempt in range(max_jupiter_retries):
+            try:
+                if not quote_data:
+                    print("❌ [PROD] Sem dados de Quote válidos.")
+                    return None
+
+                # --- 2. CONSTRUIR SWAP JUPITER (SESSÃO PROTEGIDA) ---
+                swap_url = jupiter_endpoints[attempt % len(jupiter_endpoints)]
+                payload = {
+                    "quoteResponse": quote_data,
+                    "userPublicKey": w_address,
+                    "wrapAndUnwrapSol": True,
+                    "dynamicComputeUnitLimit": True,
+                    "prioritizationFeeLamports": self.priority_fee,
+                    "feeAccount": w_address
+                }
+
+                # 🛠️ RESOLVIDO: 'async with' limpa as conexões da memória automaticamente e evita o erro de Unclosed Session
+                session = self._get_session()
+                async with session.post(swap_url, json=payload, timeout=2.0) as resp:
+                    if resp.status != 200:
+                        print(f"⚠️ [JUPITER] Erro HTTP {resp.status} em {swap_url}")
+                        if resp.status in [429, 500, 503]:
+                            raise Exception(f"HTTP_{resp.status}")
+                        return None
+                    swap_res = await resp.json()
+                    tx_base64 = swap_res['swapTransaction']
+
+                # --- 3. ASSINATURA NATIVA (MÉTODO COMPILADO EM RUST) ---
+                raw_tx = base64.b64decode(tx_base64)
+                v_tx_jupiter = VersionedTransaction.from_bytes(raw_tx)
+
+                # Compilação e fusão de assinaturas em baixo nível (Rust)
+                v_tx = VersionedTransaction(v_tx_jupiter.message, [self.wallet])
+
+                # --- 4. ENVIO DE ALTA VELOCIDADE (MÓDULO PROD) ---
+                # 🚀 OPTIMIZAÇÃO: skip_preflight=True desliga a simulação e ganha centenas de milissegundos críticos
+                opts = TxOpts(skip_preflight=True, preflight_commitment=Commitment("processed"))
+                try:
+                    res = await self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
+                    tx_hash = str(res.value)
+                except Exception as node_error:
+                    print(f"🚨 [Heliux] Transação rejeitada no pipeline de entrada: {node_error}")
+                    return None
+
+                # --- 5. POLLING DE CONFIRMAÇÃO OTIMIZADO ---
+                confirmed = False
+                for check_attempt in range(30):  # 15 Segundos de tolerância agressiva para arbitragem
+                    await asyncio.sleep(0.5)
+                    try:
+                        status_resp = await self.solana_manager.solana.get_signature_statuses([res.value])
+                        if status_resp.value and status_resp.value[0] is not None:
+                            status = status_resp.value[0]
+
+                            if status.err is not None:
+                                print(f"❌ [REVERT] Transação falhou internamente na chain: {status.err}")
+                                return None
+
+                            if status.confirmation_status is not None:
+                                confirmed = True
+                                break
+                    except Exception:
+                        continue  # Suporta falhas temporárias de rede do RPC
+
+                if not confirmed:
+                    print(f"⚠️ [DROP] Transação expirou sem entrar no bloco. Abortando Hedge.")
+                    return None
+
+                return tx_hash
+
+            except Exception as e:
+                error_str = str(e).lower()
+                is_network_error = any(x in error_str for x in [
+                    "clientconnectorerror", "dns", "timeout", "cannot connect",
+                    "401", "429", "403", "500", "503", "unauthorized", "http_"
+                ])
+
+                if is_network_error and attempt < max_jupiter_retries - 1:
+                    await asyncio.sleep(0.1)  # Pequeno respiro antes de mudar de rota
+                    continue
+
+                elif is_network_error:
+                    # 🛠️ RESOLVIDO: Em vez de recursão infinita, rotacionamos o RPC e devolvemos None
+                    # para o loop principal reiniciar de forma limpa, preservando a Stack de memória.
+                    print(f"🚨 [PROD] Falha total de rede. Rotacionando RPC para a próxima oportunidade.")
+                    self.solana_manager.rotate_rpc()
+                    return None
+
+                print(f"❌ [CRÍTICO] Erro de lógica não contornável: {e}")
+                return None
+
+    async def send_transaction_old(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
+                                   amount_usd: float, chain: Chains, quote_data: dict | None):
+
         # 1. TRATAMENTO DO VALOR
         val_in_raw = int(amount_usd)
 
@@ -127,9 +248,6 @@ class SolanaExecutor(ExecutorBase, ABC):
                     print("❌ ERRO: quote_data da Jupiter é necessário para execução na Solana.")
                     return None
 
-                # 2. Construção da Transação via Jupiter com Alternância de URL
-                # Se attempt = 0 -> usa quote-api.jup.ag
-                # Se attempt = 1 -> usa api.jup.ag (Plano B de DNS/Infraestrutura)
                 swap_url = jupiter_endpoints[attempt % len(jupiter_endpoints)]
 
                 payload = {
@@ -138,11 +256,11 @@ class SolanaExecutor(ExecutorBase, ABC):
                     "wrapAndUnwrapSol": True,
                     "dynamicComputeUnitLimit": True,
                     "prioritizationFeeLamports": self.priority_fee,
-                    "feeAccount": w_address
+                    "feeAccount": w_address,
+                    "slippageBps": 150
                 }
 
                 session = self._get_session()
-                # Timeout estrito de 2 segundos para o bot não congelar se a JUP engasgar
                 async with session.post(swap_url, json=payload, timeout=2.0) as resp:
                     if resp.status != 200:
                         print(f"⚠️ Falha ao construir swap Jupiter em {swap_url}: {await resp.text()}")
@@ -156,42 +274,61 @@ class SolanaExecutor(ExecutorBase, ABC):
                 raw_tx = base64.b64decode(tx_base64)
                 v_tx = VersionedTransaction.from_bytes(raw_tx)
 
-                # Passamos a mensagem convertida em bytes puros
+                # Injetar blockhash fresco contornando a propriedade read-only
+                try:
+                    recent_blockhash_resp = await self.solana_manager.solana.get_latest_blockhash()
+                    fresh_blockhash = recent_blockhash_resp.value.blockhash
+
+                    # Acedemos ao campo diretamente através do objeto de mensagem subjacente
+                    # que permite a alteração antes da serialização final
+                    if hasattr(v_tx.message, 'recent_blockhash'):
+                        # Para Message (Legacy)
+                        object.__setattr__(v_tx.message, 'recent_blockhash', fresh_blockhash)
+                    else:
+                        # Para MessageV0
+                        object.__setattr__(v_tx.message, 'recent_blockhash', fresh_blockhash)
+
+                    print(f"🔄 Blockhash forçado via setattr com sucesso: {fresh_blockhash}")
+                except Exception as bh_error:
+                    print(f"⚠️ Não foi possível atualizar o blockhash: {bh_error}")
+
+                # Assinar os bytes corrigidos
                 signature = self.wallet.sign_message(bytes(v_tx.message))
                 v_tx.signatures = [signature]
 
-                # 4. Envio (Em modo 'processed' ultra-rápido!)
+                # 4. Envio (MODIFICADO COM TRY/EXCEPT PARA CAPTURAR O VEREDICTO DA HELIUS)
                 opts = TxOpts(skip_preflight=True, preflight_commitment=Commitment("processed"))
-                res = await self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
+                try:
+                    res = await self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
+                    # Se o nó aceitar, extraímos a hash normalmente
+                    tx_hash = str(res.value)
+                    print(f"🚀 Enviado Solana! Hash: {tx_hash}")
+                except Exception as node_error:
+                    # Se a Helius rejeitar os bytes na hora por saldo de SOL insuficiente ou Blockhash velho
+                    print(f"🚨 O nó da Helius rejeitou a transação imediatamente! Erro: {node_error}")
+                    return None
 
-                tx_hash = str(res.value)
-                print(f"🚀 Enviado Solana! Hash: {tx_hash}")
-                print(f"⏳ Aguardando confirmação no bloco da Solana...")
+                print(f"⏳ Aguardando confirmation no bloco da Solana...")
 
-                # 🔒 SEGURANÇA CRÍTICA: Validação ativa por Polling para evitar Hedges fantasmas
+                # 🔒 SEGURANÇA CRÍTICA: Validação ativa por Polling
                 confirmed = False
-                # Fazemos 8 tentativas com intervalos de 300ms (Total ~2.4 segundos de espera máxima)
-                for check_attempt in range(8):
-                    await asyncio.sleep(0.3)
+                for check_attempt in range(40):
+                    await asyncio.sleep(0.5)
                     try:
-                        # Buscamos o status da assinatura diretamente na blockchain
                         status_resp = await self.solana_manager.solana.get_signature_statuses([res.value])
 
                         if status_resp.value and status_resp.value[0] is not None:
                             status = status_resp.value[0]
 
-                            # 1. Se tiver um erro explícito dentro do bloco (ex: Slippage / Revert)
                             if status.err is not None:
                                 print(f"❌ Transação fez REVERT na Solana! Erro interno: {status.err}")
                                 return None
 
-                            # 2. Se foi incluída no bloco com sucesso (processed ou confirmed)
                             if status.confirmation_status is not None:
                                 print(f"✅ Transação CONFIRMADA no bloco! Status: {status.confirmation_status}")
                                 confirmed = True
                                 break
                     except Exception as status_error:
-                        # Falha pontual ao ler o nó RPC, ignora e tenta no próximo milissegundo
                         continue
 
                 if not confirmed:
@@ -203,7 +340,6 @@ class SolanaExecutor(ExecutorBase, ABC):
             except Exception as e:
                 error_str = str(e).lower()
 
-                # Deteta erros de rede como DNS, timeouts, recusas de conexão ou erros de servidor
                 is_network_error = any(x in error_str for x in [
                     "clientconnectorerror", "dns", "timeout", "cannot connect",
                     "401", "429", "403", "500", "503", "unauthorized", "http_"
@@ -214,15 +350,13 @@ class SolanaExecutor(ExecutorBase, ABC):
                     print(f"⚠️ [TENTATIVA {attempt + 1}/{max_jupiter_retries}] Falha de rede/DNS na Jupiter: {e}.")
                     print(f"🔄 Alternando rota para: {next_url} em 150ms...")
                     await asyncio.sleep(0.15)
-                    continue  # Salta para a próxima iteração do loop 'for' (tentativa seguinte)
+                    continue
 
                 elif is_network_error:
-                    # Se esgotou as rotas locais da Jupiter, roda o teu RPC e faz nova tentativa recursiva limpa
                     print(f"🚨 Esgotadas as rotas de contingência da Jupiter. Rotacionando RPC e reiniciando envio...")
                     self.solana_manager.rotate_rpc()
                     return await self.send_transaction(pools_list, dir_list, tokens_list, amount_usd, chain, quote_data)
 
-                # Se for um erro lógico não-corrigível (ex: Slippage estourou na simulação local, erro de assinatura, etc.)
                 print(f"❌ Erro crítico no envio Solana (Não corrigível automaticamente): {e}")
                 return None
 
