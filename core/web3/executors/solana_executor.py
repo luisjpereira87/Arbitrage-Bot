@@ -166,6 +166,37 @@ class SolanaExecutor(ExecutorBase, ABC):
 
                 tx_hash = str(res.value)
                 print(f"🚀 Enviado Solana! Hash: {tx_hash}")
+                print(f"⏳ Aguardando confirmação no bloco da Solana...")
+
+                # 🔒 SEGURANÇA CRÍTICA: Validação ativa por Polling para evitar Hedges fantasmas
+                confirmed = False
+                # Fazemos 8 tentativas com intervalos de 300ms (Total ~2.4 segundos de espera máxima)
+                for check_attempt in range(8):
+                    await asyncio.sleep(0.3)
+                    try:
+                        # Buscamos o status da assinatura diretamente na blockchain
+                        status_resp = await self.solana_manager.solana.get_signature_statuses([res.value])
+
+                        if status_resp.value and status_resp.value[0] is not None:
+                            status = status_resp.value[0]
+
+                            # 1. Se tiver um erro explícito dentro do bloco (ex: Slippage / Revert)
+                            if status.err is not None:
+                                print(f"❌ Transação fez REVERT na Solana! Erro interno: {status.err}")
+                                return None
+
+                            # 2. Se foi incluída no bloco com sucesso (processed ou confirmed)
+                            if status.confirmation_status is not None:
+                                print(f"✅ Transação CONFIRMADA no bloco! Status: {status.confirmation_status}")
+                                confirmed = True
+                                break
+                    except Exception as status_error:
+                        # Falha pontual ao ler o nó RPC, ignora e tenta no próximo milissegundo
+                        continue
+
+                if not confirmed:
+                    print(f"⚠️ Transação não apareceu no bloco a tempo (Dropada/Expirada). Abortando Hedge na HL.")
+                    return None
 
                 return tx_hash
 

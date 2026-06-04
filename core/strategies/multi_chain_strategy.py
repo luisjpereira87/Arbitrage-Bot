@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import math
 import time
 from datetime import datetime
 
@@ -319,53 +318,6 @@ class MultiChainStrategy(ArbitrageBase):
             logging.error(f"💥 Erro no adjust_balance para {symbol_b}: {e}")
             return 0.0
 
-    def adjust_balance_old(self, usdc_balance_to_trade: float, dex_price: float, hl_pair: str, symbol_b: str) -> float:
-        try:
-            # 1. Garantir que os mercados estão carregados no CCXT
-            if hl_pair not in self.hl.markets:
-                logging.warning(f"⚠️ Par {hl_pair} não carregado. A tentar usar valor bruto.")
-                return usdc_balance_to_trade
-
-            market = self.hl.market(hl_pair)
-
-            # 2. Calcular quantidade bruta de tokens
-            raw_qty = usdc_balance_to_trade / dex_price
-
-            # 3. Obter a precisão (número de casas decimais permitidas)
-            # Na HL, isto vem geralmente em market['precision']['amount']
-            precision = market['precision']['amount']
-
-            # 4. Forçar o arredondamento para baixo (Floor) com base na precisão
-            # Se precision for 0 (caso do PENDLE), factor será 1. Se for 2, factor será 100.
-            factor = 10 ** precision
-            clean_qty = math.floor(raw_qty * factor) / factor
-
-            # 5. Converter para o formato de string/float que o CCXT aceita (evita erros de float binário)
-            clean_qty = float(self.hl.amount_to_precision(hl_pair, clean_qty))
-
-            # 6. Calcular o custo em USD para comprar EXATAMENTE essa quantidade
-            # Adicionamos 0.3% de margem para cobrir a taxa da DEX (0.05% a 0.3%) e slippage
-            # Assim garantimos que o contrato tem USDC suficiente para completar o swap
-            adjust_balance = clean_qty * dex_price * 1.003
-
-            if adjust_balance > usdc_balance_to_trade:
-                logging.warning(f"⚠️ Ajuste excedeu balance original. Recalculando...")
-                # Se a margem de 0.3% estourou o teto, reduzimos uma unidade de precisão
-                step = 1 / factor
-                clean_qty -= step
-                adjust_balance = clean_qty * dex_price * 1.003
-
-            logging.info(
-                f"🎯 [PRECISÃO {symbol_b}] Qtd: {clean_qty} | "
-                f"USD Original: ${usdc_balance_to_trade:.2f} | USD Ajustado: ${adjust_balance:.4f}"
-            )
-
-            return adjust_balance
-
-        except Exception as e:
-            logging.error(f"❌ Erro crítico no adjust_balance: {e}")
-            return usdc_balance_to_trade
-
     async def execute_entry_sequence(self, pair: WatchedPair, amount_usdc_to_trade: float, total_balance_usdc: float,
                                      dex_price: float,
                                      hl_price: float,
@@ -475,7 +427,8 @@ class MultiChainStrategy(ArbitrageBase):
 
             TradePositionMulti.save_position(new_pos)
             # self.active_position = new_pos
-            self.active_positions[pair.hl_pair] = new_pos
+            # self.active_positions[pair.hl_pair] = new_pos
+            self.active_positions = TradePositionMulti.load_all_positions()
             return True
         else:
             self.force_exit_to_usdc(pair, pair.addr_b, pair.addr_a, real_units, selected_pool, not direction,
