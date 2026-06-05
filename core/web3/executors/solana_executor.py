@@ -406,6 +406,9 @@ class SolanaExecutor(ExecutorBase, ABC):
                 "wrapAndUnwrapSol": True,
                 "dynamicComputeUnitLimit": True,
                 "prioritizationFeeLamports": self.priority_fee
+
+                "skipUserAccountsRpcCalls": False,
+                "asLegacyTransaction": False
             }
 
             session = self._get_session()
@@ -425,7 +428,7 @@ class SolanaExecutor(ExecutorBase, ABC):
             v_tx.signatures = [signature]
 
             # 4. Envio
-            opts = TxOpts(skip_preflight=True, preflight_commitment=Commitment("processed"))
+            opts = TxOpts(skip_preflight=False, preflight_commitment=Commitment("processed"))
             res = await  self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
 
             tx_hash = str(res.value)
