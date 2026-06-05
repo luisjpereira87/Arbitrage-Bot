@@ -8,8 +8,10 @@ import aiohttp
 from solana.rpc.commitment import Commitment
 from solana.rpc.types import TxOpts, TokenAccountOpts
 from solders.keypair import Keypair
+from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
+from spl.token.instructions import get_associated_token_address, create_associated_token_account
 
 from core.config.properties_base import PropertiesBase
 from core.config.properties_multi import PropertiesMulti
@@ -30,6 +32,8 @@ class SolanaExecutor(ExecutorBase, ABC):
         self.session: Optional[aiohttp.ClientSession] = None
         # self.priority_fee = 50000  # Lamports (~$0.01)
         self.priority_fee = 1500000
+
+        asyncio.run(self.__mapear_e_preparar_tokens())
 
     @property
     def w3(self):
@@ -525,6 +529,87 @@ class SolanaExecutor(ExecutorBase, ABC):
 
     async def get_gas_cost_usd(self, eth_price: (float | None), chain: Chains) -> float:
         return 0.0
+
+    async def __mapear_e_preparar_tokens(self):
+        """
+        MÉTODO PRIVADO: Filtra a configuração multi-chain, encontra os tokens da Solana,
+        mapeia as suas chaves públicas e garante que as ATAs existem na blockchain.
+        """
+        carteira_pubkey = self.wallet.pubkey()
+
+        # 1. Usamos um dicionário (ou set) para garantir que apenas guardamos tokens ÚNICOS
+        # Evita verificar o mesmo token várias vezes se ele estiver em múltiplos pares
+        tokens_solana_unicos = {}
+
+        for symbol_a, symbol_b, hl_pair, chain in self.config.multi_chain:
+            # Só nos interessam os pares que rodam na Solana
+            if chain == 'solana':
+                token_a_data = self.config.tokens.get(symbol_a)
+                token_b_data = self.config.tokens.get(symbol_b)
+
+                if token_a_data is None or token_b_data is None:
+                    print(f"⚠️ [AVISO] Dados em falta na config para o par {symbol_a}-{symbol_b}")
+                    continue
+
+                # Assumindo que na tua config guardas o endereço no campo 'address' ou 'mint'
+                # Ajusta o .get('address') para bater com o formato do teu JSON/Dicionário
+                if symbol_a not in tokens_solana_unicos:
+                    tokens_solana_unicos[symbol_a] = token_a_data.address
+                if symbol_b not in tokens_solana_unicos:
+                    tokens_solana_unicos[symbol_b] = token_b_data.address
+
+        if not tokens_solana_unicos:
+            print("🟩 [INICIALIZAÇÃO] Nenhum par de Solana encontrado na configuração multi-chain.")
+            return
+
+        print(
+            f"\n🛠️  [INICIALIZAÇÃO] Detetados {len(tokens_solana_unicos)} tokens Solana únicos. A verificar gavetas...")
+
+        # 2. Agora sim, corremos o processo de validação/criação apenas para os tokens únicos filtrados
+        for simbolo, mint_str in tokens_solana_unicos.items():
+            if not mint_str:
+                continue
+
+            mint_pubkey = Pubkey.from_string(mint_str)
+            ata_teorica = get_associated_token_address(carteira_pubkey, mint_pubkey)
+            # self.atas_mapeadas[simbolo] = ata_teorica
+
+            try:
+                resposta = await self.solana_manager.solana.get_account_info(ata_teorica)
+
+                if resposta.value is None:
+                    print(f"⚠️  [ATA] {simbolo} não tem conta ativa. A abrir gaveta na blockchain...")
+
+                    instrucao_criar_ata = create_associated_token_account(
+                        payer=carteira_pubkey,
+                        owner=carteira_pubkey,
+                        mint=mint_pubkey
+                    )
+
+                    recent_blockhash_resp = await self.solana_manager.solana.get_latest_blockhash()
+                    blockhash = recent_blockhash_resp.value.blockhash
+
+                    mensagem = Message.new_with_blockhash(
+                        [instrucao_criar_ata],
+                        carteira_pubkey,
+                        blockhash
+                    )
+
+                    tx = VersionedTransaction(mensagem, [self.wallet])
+
+                    response = await self.solana_manager.solana.send_raw_transaction(bytes(tx))
+                    await self.solana_manager.solana.confirm_transaction(response.value)
+                    print(f"✅ [ATA] Conta para {simbolo} criada com sucesso!")
+
+                    await asyncio.sleep(1)
+                else:
+                    print(f"🟩 [ATA] {simbolo} já tem conta ativa. Endereço: {ata_teorica}")
+
+            except Exception as e:
+                print(f"❌ Erro ao verificar ou criar a conta para {simbolo}: {e}")
+                continue
+
+        print("🟩 [INICIALIZAÇÃO] Filtro e preparação de tokens concluídos com sucesso!\n")
 
 
 class TokenInfo:
