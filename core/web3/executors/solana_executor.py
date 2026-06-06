@@ -135,7 +135,7 @@ class SolanaExecutor(ExecutorBase, ABC):
                     # "prioritizationFeeLamports": self.priority_fee,
                     "feeAccount": w_address,
                     "prioritizationFeeLamports": "auto",
-                    "skipUserAccountsRpcCalls": False,
+                    "skipUserAccountsRpcCalls": True,
                     "asLegacyTransaction": True
                 }
 
