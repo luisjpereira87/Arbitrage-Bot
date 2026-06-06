@@ -40,6 +40,9 @@ if __name__ == '__main__':
     multi_chain_bot = MultiChainBot(properties_multi)
     asyncio.run(multi_chain_bot.run())
 
+    # test = TestSolana()
+    # asyncio.run(test.test_execute())
+
     # multi_chain_bot.test_manual_quote()
 
     # t = WalletManager( Web3Manager())

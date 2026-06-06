@@ -51,6 +51,86 @@ class MultiChainStrategy(ArbitrageBase):
     async def calculate_all_chains_capital(self) -> dict:
         """
         Calcula o capital disponível, alocado e os tokens ativos para todas as chains
+        de uma única vez antes do loop de decisão, respeitando dinamicamente as vagas (slots) livres.
+        """
+        inventory = await self.get_all_balances()
+        hl_balance_usdc = inventory.get("hl", 0.0)
+
+        # Estrutura onde vamos guardar os resultados processados por chain
+        chains_capital = {}
+
+        # Mapeamos quais são as chains que temos configuradas nos nossos pares
+        active_chains = {pair.chain for pair in self.watched_pairs}
+
+        for chain in active_chains:
+            chain_balances = inventory.get(chain.value, {})
+
+            # 🚀 SOLUÇÃO DINÂMICA: Procuramos o par modelo desta chain para saber o nome do USDC
+            pair_modelo = next((p for p in self.watched_pairs if p.chain == chain), None)
+            usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
+
+            dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
+
+            # 1. Calcular o capital que o JSON diz que já está investido nesta DEX
+            capital_investido_nesta_dex = sum(
+                pos.initial_balance_dex_usd for pos in self.active_positions.values()
+                if getattr(pos, 'chain', None) == chain and getattr(pos, 'status', None) == "OPEN"
+            )
+
+            # 2. Contar quantos slots estão ocupados AGORA nesta chain específica
+            slots_ocupados = sum(
+                1 for pos in self.active_positions.values()
+                if getattr(pos, 'chain', None) == chain and getattr(pos, 'status', None) == "OPEN"
+            )
+            slots_livres = max(0, self.max_slots - slots_ocupados)
+
+            # 3. Isolar o USDC que está REALMENTE LIVRE na DEX para novos trades
+            # Se os tokens ativos inflacionam o 'dex_balance_usdc', limpamos esse valor subtraindo o trade ativo
+            usdc_realmente_livre_dex = max(0.0, dex_balance_usdc - capital_investido_nesta_dex)
+
+            # 4. MATEMÁTICA DOS SLOTS DISPONÍVEIS: Divide o dinheiro pelas vagas que restam!
+            if slots_livres > 0:
+                # Se resta 1 vaga: usdc_livre / 1 = Usa tudo o que resta!
+                # Se restam 2 vagas: usdc_livre / 2 = Divide a banca a meio para o primeiro trade.
+                target_per_slot = usdc_realmente_livre_dex / slots_livres
+            else:
+                target_per_slot = 0.0
+
+            # O capital para o próximo trade respeita o limite da vaga livre, o saldo real livre e a HL
+            usdc_balance_to_trade = min(target_per_slot, usdc_realmente_livre_dex, hl_balance_usdc)
+
+            # Para fins de log e controlo global, o saldo total é a soma do que está na DEX e na HL
+            total_balance_usdc = dex_balance_usdc + hl_balance_usdc
+
+            # 5. Identificar "Batatas Quentes" (Tokens) desta chain, ignorando o símbolo do USDC
+            active_tokens = {
+                sym: units for sym, units in chain_balances.items()
+                if usdc_symbol not in sym and units > 0.00001
+            }
+
+            # Guardamos no dicionário com o índice da chain
+            chains_capital[chain] = {
+                "usdc_balance_to_trade": usdc_balance_to_trade,
+                "total_balance_usdc": total_balance_usdc,
+                "active_tokens": active_tokens,
+                "dex_balance_usdc": dex_balance_usdc
+            }
+
+            logging.info(
+                f"📊 [BANCA CALCULADA] {chain.value.upper()} | "
+                f"Slots Livres: {slots_livres}/{self.max_slots} | "
+                f"DEX USDC Bruto: ${dex_balance_usdc:.2f} | "
+                f"USDC Livre Real: ${usdc_realmente_livre_dex:.2f} | "
+                f"Próximo Slot Alocado: ${usdc_balance_to_trade:.2f} | "
+                f"Tokens: {active_tokens} | "
+                f"HL USDC: ${hl_balance_usdc:.2f}"
+            )
+
+        return chains_capital
+
+    async def calculate_all_chains_capital_old(self) -> dict:
+        """
+        Calcula o capital disponível, alocado e os tokens ativos para todas as chains
         de uma única vez antes do loop de decisão.
         """
         inventory = await self.get_all_balances()
