@@ -50,65 +50,49 @@ class MultiChainStrategy(ArbitrageBase):
 
     async def calculate_all_chains_capital(self) -> dict:
         """
-        Calcula o capital disponível, alocado e os tokens ativos para todas as chains
-        de uma única vez antes do loop de decisão, respeitando dinamicamente as vagas (slots) livres.
+        Calcula o capital disponível de forma ultra-simplificada.
+        Se a posição existe em memória, o slot está ocupado.
         """
         inventory = await self.get_all_balances()
         hl_balance_usdc = inventory.get("hl", 0.0)
 
-        # Estrutura onde vamos guardar os resultados processados por chain
         chains_capital = {}
-
-        # Mapeamos quais são as chains que temos configuradas nos nossos pares
         active_chains = {pair.chain for pair in self.watched_pairs}
 
         for chain in active_chains:
             chain_balances = inventory.get(chain.value, {})
 
-            # 🚀 SOLUÇÃO DINÂMICA: Procuramos o par modelo desta chain para saber o nome do USDC
+            # Descobrir o nome do USDC nesta rede (ex: "USDC")
             pair_modelo = next((p for p in self.watched_pairs if p.chain == chain), None)
             usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
-
             dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
 
-            # 1. Calcular o capital que o JSON diz que já está investido nesta DEX
-            capital_investido_nesta_dex = sum(
-                pos.initial_balance_dex_usd for pos in self.active_positions.values()
-                if getattr(pos, 'chain', None) == chain and getattr(pos, 'status', None) == "OPEN"
-            )
+            # 🎯 A TUA LÓGICA ULTRA-SIMPLIFICADA
+            capital_preso_no_trade = 0.0
+            slots_ocupados = 0
 
-            # 2. Contar quantos slots estão ocupados AGORA nesta chain específica
-            slots_ocupados = sum(
-                1 for pos in self.active_positions.values()
-                if getattr(pos, 'chain', None) == chain and getattr(pos, 'status', None) == "OPEN"
-            )
+            for pair in self.watched_pairs:
+                if pair.chain == chain:
+                    # Se existe no dicionário, o trade está a correr (porque apagas ao fechar)
+                    pos = self.active_positions.get(pair.symbol_b)
+                    if pos:
+                        slots_ocupados += 1
+                        capital_preso_no_trade += getattr(pos, 'initial_balance_dex_usd', 0.0)
+
+            # Matemática dos slots restantes
             slots_livres = max(0, self.max_slots - slots_ocupados)
+            usdc_livre_real = max(0.0, dex_balance_usdc - capital_preso_no_trade)
 
-            # 3. Isolar o USDC que está REALMENTE LIVRE na DEX para novos trades
-            # Se os tokens ativos inflacionam o 'dex_balance_usdc', limpamos esse valor subtraindo o trade ativo
-            usdc_realmente_livre_dex = max(0.0, dex_balance_usdc - capital_investido_nesta_dex)
-
-            # 4. MATEMÁTICA DOS SLOTS DISPONÍVEIS: Divide o dinheiro pelas vagas que restam!
             if slots_livres > 0:
-                # Se resta 1 vaga: usdc_livre / 1 = Usa tudo o que resta!
-                # Se restam 2 vagas: usdc_livre / 2 = Divide a banca a meio para o primeiro trade.
-                target_per_slot = usdc_realmente_livre_dex / slots_livres
+                target_per_slot = usdc_livre_real / slots_livres
             else:
                 target_per_slot = 0.0
 
-            # O capital para o próximo trade respeita o limite da vaga livre, o saldo real livre e a HL
-            usdc_balance_to_trade = min(target_per_slot, usdc_realmente_livre_dex, hl_balance_usdc)
-
-            # Para fins de log e controlo global, o saldo total é a soma do que está na DEX e na HL
+            usdc_balance_to_trade = min(target_per_slot, usdc_livre_real, hl_balance_usdc)
             total_balance_usdc = dex_balance_usdc + hl_balance_usdc
 
-            # 5. Identificar "Batatas Quentes" (Tokens) desta chain, ignorando o símbolo do USDC
-            active_tokens = {
-                sym: units for sym, units in chain_balances.items()
-                if usdc_symbol not in sym and units > 0.00001
-            }
+            active_tokens = {sym: qt for sym, qt in chain_balances.items() if usdc_symbol not in sym and qt > 0.0001}
 
-            # Guardamos no dicionário com o índice da chain
             chains_capital[chain] = {
                 "usdc_balance_to_trade": usdc_balance_to_trade,
                 "total_balance_usdc": total_balance_usdc,
@@ -117,13 +101,11 @@ class MultiChainStrategy(ArbitrageBase):
             }
 
             logging.info(
-                f"📊 [BANCA CALCULADA] {chain.value.upper()} | "
-                f"Slots Livres: {slots_livres}/{self.max_slots} | "
-                f"DEX USDC Bruto: ${dex_balance_usdc:.2f} | "
-                f"USDC Livre Real: ${usdc_realmente_livre_dex:.2f} | "
-                f"Próximo Slot Alocado: ${usdc_balance_to_trade:.2f} | "
-                f"Tokens: {active_tokens} | "
-                f"HL USDC: ${hl_balance_usdc:.2f}"
+                f"📊 [BANCA CALCULADA] {chain.value.upper()} |\n"
+                f"   -> Slots Livres: {slots_livres}/{self.max_slots}\n"
+                f"   -> Capital Preso: ${capital_preso_no_trade:.2f}\n"
+                f"   -> USDC Livre: ${usdc_livre_real:.2f}\n"
+                f"   -> Próximo Slot: ${usdc_balance_to_trade:.2f}"
             )
 
         return chains_capital
@@ -247,10 +229,10 @@ class MultiChainStrategy(ArbitrageBase):
                 continue
 
             hl_price = price_data.bid
-            price_hl_slippage = hl_price * (1 - 0.005)
+            # price_hl_slippage = hl_price * (1 - 0.005)
 
             # Procura oportunidades na DEX correspondente
-            opportunity = await self.find_best_dex_opportunity(pair, price_hl_slippage, usdc_balance_to_trade,
+            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade,
                                                                gas_cost_usdc)
             if not opportunity:
                 await asyncio.sleep(1.0)
