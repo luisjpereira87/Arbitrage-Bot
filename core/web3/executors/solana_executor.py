@@ -136,7 +136,7 @@ class SolanaExecutor(ExecutorBase, ABC):
                     "feeAccount": w_address,
                     "prioritizationFeeLamports": "auto",
                     "skipUserAccountsRpcCalls": False,
-                    "asLegacyTransaction": False
+                    "asLegacyTransaction": True
                 }
 
                 # 🛠️ RESOLVIDO: 'async with' limpa as conexões da memória automaticamente e evita o erro de Unclosed Session
