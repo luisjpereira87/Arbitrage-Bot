@@ -63,7 +63,8 @@ class JupiterClient:
             "slippageBps": "100",
             # "excludeDirectRoute": "false"
             "excludeDirectRoute": "true" if exclude_direct_route else "false",
-            "restrictIntermediateTokens": "true" if restrict_intermediate_tokens else "false"
+            "restrictIntermediateTokens": "true" if restrict_intermediate_tokens else "false",
+            "asLegacyTransaction": "true"
         }
         headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
 
