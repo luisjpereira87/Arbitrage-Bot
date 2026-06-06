@@ -50,68 +50,6 @@ class MultiChainStrategy(ArbitrageBase):
 
     async def calculate_all_chains_capital(self) -> dict:
         """
-        Calcula o capital disponível de forma ultra-simplificada.
-        Se a posição existe em memória, o slot está ocupado.
-        """
-        inventory = await self.get_all_balances()
-        hl_balance_usdc = inventory.get("hl", 0.0)
-
-        chains_capital = {}
-        active_chains = {pair.chain for pair in self.watched_pairs}
-
-        for chain in active_chains:
-            chain_balances = inventory.get(chain.value, {})
-
-            # Descobrir o nome do USDC nesta rede (ex: "USDC")
-            pair_modelo = next((p for p in self.watched_pairs if p.chain == chain), None)
-            usdc_symbol = pair_modelo.symbol_a if pair_modelo else "USDC"
-            dex_balance_usdc = chain_balances.get(usdc_symbol, 0.0)
-
-            # 🎯 A TUA LÓGICA ULTRA-SIMPLIFICADA
-            capital_preso_no_trade = 0.0
-            slots_ocupados = 0
-
-            for pair in self.watched_pairs:
-                if pair.chain == chain:
-                    # Se existe no dicionário, o trade está a correr (porque apagas ao fechar)
-                    pos = self.active_positions.get(pair.symbol_b)
-                    if pos:
-                        slots_ocupados += 1
-                        capital_preso_no_trade += getattr(pos, 'initial_balance_dex_usd', 0.0)
-
-            # Matemática dos slots restantes
-            slots_livres = max(0, self.max_slots - slots_ocupados)
-            usdc_livre_real = max(0.0, dex_balance_usdc - capital_preso_no_trade)
-
-            if slots_livres > 0:
-                target_per_slot = usdc_livre_real / slots_livres
-            else:
-                target_per_slot = 0.0
-
-            usdc_balance_to_trade = min(target_per_slot, usdc_livre_real, hl_balance_usdc)
-            total_balance_usdc = dex_balance_usdc + hl_balance_usdc
-
-            active_tokens = {sym: qt for sym, qt in chain_balances.items() if usdc_symbol not in sym and qt > 0.0001}
-
-            chains_capital[chain] = {
-                "usdc_balance_to_trade": usdc_balance_to_trade,
-                "total_balance_usdc": total_balance_usdc,
-                "active_tokens": active_tokens,
-                "dex_balance_usdc": dex_balance_usdc
-            }
-
-            logging.info(
-                f"📊 [BANCA CALCULADA] {chain.value.upper()} |\n"
-                f"   -> Slots Livres: {slots_livres}/{self.max_slots}\n"
-                f"   -> Capital Preso: ${capital_preso_no_trade:.2f}\n"
-                f"   -> USDC Livre: ${usdc_livre_real:.2f}\n"
-                f"   -> Próximo Slot: ${usdc_balance_to_trade:.2f}"
-            )
-
-        return chains_capital
-
-    async def calculate_all_chains_capital_old(self) -> dict:
-        """
         Calcula o capital disponível, alocado e os tokens ativos para todas as chains
         de uma única vez antes do loop de decisão.
         """
