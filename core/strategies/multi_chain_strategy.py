@@ -167,9 +167,11 @@ class MultiChainStrategy(ArbitrageBase):
                 continue
 
             hl_price = price_data.bid
+            price_hl_slippage = hl_price * (1 - 0.005)
 
             # Procura oportunidades na DEX correspondente
-            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade, gas_cost_usdc)
+            opportunity = await self.find_best_dex_opportunity(pair, price_hl_slippage, usdc_balance_to_trade,
+                                                               gas_cost_usdc)
             if not opportunity:
                 await asyncio.sleep(1.0)
                 continue
@@ -222,7 +224,7 @@ class MultiChainStrategy(ArbitrageBase):
                     watched_pair=watched_pair,
                     net_profit=current_profit_real,
                     spread_percent=spread_percent,
-                    amount_usdc=active_position.total_balance_before_usd,
+                    amount_usdc=active_position.total_balance_after_usd,
                     is_exit=True
                 )
 
