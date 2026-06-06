@@ -75,10 +75,18 @@ class MultiChainStrategy(ArbitrageBase):
             # dex_balance_usdc = 50.0
 
             # Filtrar posições ativas desta chain específica
+            """
             capital_investido_nesta_dex = sum(
                 pos.initial_balance_dex_usd for pos in self.active_positions.values()
                 if getattr(pos, 'chain', None) == chain
             )
+            """
+            capital_investido_nesta_dex = 0.0
+            for pair in self.watched_pairs:
+                if pair.chain == chain:
+                    pos = self.active_positions.get(pair.symbol_b)
+                    if pos:  # Se existe no teu dicionário, o slot está ativo!
+                        capital_investido_nesta_dex += getattr(pos, 'initial_balance_dex_usd', 0.0)
 
             total_chain_capital = dex_balance_usdc + capital_investido_nesta_dex
             target_per_slot = total_chain_capital / self.max_slots
