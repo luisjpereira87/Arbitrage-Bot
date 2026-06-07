@@ -351,7 +351,8 @@ class MultiChainStrategy(ArbitrageBase):
             fee=dex_fee,
             tolerance=0.003,
             chain=pair.chain,
-            quote_data=data_quote
+            quote_data=data_quote,
+            is_exit=False
         )
 
         # CÁLCULO DO VALOR REAL QUE VAI SER EXECUTADO
