@@ -61,9 +61,9 @@ class MultiChainExecutor(ExecutorBase):
         if chain == Chains.ARBITRUM:
             return await self.arbitrum_executor.is_swap_viable(token_in, token_out, amount_in_usd, expected_out_units,
                                                                fee,
-                                                               tolerance, chain, None)
+                                                               tolerance, chain, None, is_exit)
         elif chain == Chains.SOLANA:
             return await self.solana_executor.is_swap_viable(token_in, token_out, amount_in_usd, expected_out_units,
-                                                             fee, tolerance, chain, quote_data)
+                                                             fee, tolerance, chain, quote_data, is_exit)
 
         return False, 0.0
