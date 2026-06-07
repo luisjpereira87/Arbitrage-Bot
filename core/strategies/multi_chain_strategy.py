@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import ccxt.async_support as ccxt
 
@@ -153,6 +153,8 @@ class MultiChainStrategy(ArbitrageBase):
             symbol_base = pair.symbol_b  # Ex: "HYPE"
             active_position = self.active_positions.get(symbol_base)
 
+            has_open_position = active_position is not None
+
             # --- 🛡️ TRAVÃO DE SEGURANÇA: CONTROLO DE SLOTS ISOLADOS ---
             # Se NÃO temos uma posição aberta para este token, significa que seria um NOVO trade.
             # Portanto, temos de validar se esta blockchain ainda tem vagas (slots) disponíveis.
@@ -175,11 +177,11 @@ class MultiChainStrategy(ArbitrageBase):
                 continue
 
             hl_price = price_data.bid
-            # price_hl_slippage = hl_price * (1 - 0.005)
+            price_hl_slippage = hl_price * (1 - 0.005)
 
             # Procura oportunidades na DEX correspondente
-            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade,
-                                                               gas_cost_usdc)
+            opportunity = await self.find_best_dex_opportunity(pair, price_hl_slippage, usdc_balance_to_trade,
+                                                               gas_cost_usdc, has_open_position)
             if not opportunity:
                 await asyncio.sleep(1.0)
                 continue
@@ -233,7 +235,8 @@ class MultiChainStrategy(ArbitrageBase):
                     net_profit=current_profit_real,
                     spread_percent=spread_percent,
                     amount_usdc=active_position.total_balance_after_usd,
-                    is_exit=True
+                    is_exit=True,
+                    entry_timestamp=active_position.timestamp
                 )
 
                 if check_v:
@@ -625,8 +628,8 @@ class MultiChainStrategy(ArbitrageBase):
             return 0.0
         return raw_amount / (10 ** decimals)
 
-    def check_viability_dynamic(self, watched_pair: WatchedPair, net_profit, amount_usdc, is_exit=False,
-                                spread_percent=None):
+    def check_viability_dynamic_(self, watched_pair: WatchedPair, net_profit, amount_usdc, is_exit=False,
+                                 spread_percent=None):
         """
         Validação de viabilidade com metas de 0.5% para entrada e 0.7% para saída.
         """
@@ -674,6 +677,93 @@ class MultiChainStrategy(ArbitrageBase):
                 return True
 
             # Log de monitorização (ajustado para ser mais scannable)
+            logging.info(status_msg)
+
+            return False
+
+    def check_viability_dynamic(self, watched_pair: WatchedPair, net_profit, amount_usdc, is_exit=False,
+                                spread_percent=None, entry_timestamp=None):
+        """
+        Validação de viabilidade com metas de 0.8% para entrada e 1.2% para saída.
+        A meta de saída decai linearmente até 0% ao longo de 1 hora com base na idade do trade.
+        """
+
+        # --- 1. LÓGICA DE ENTRADA ---
+        if not is_exit:
+            # Exigimos 0.8% de lucro líquido para abrir a posição
+            min_profit_required = amount_usdc * 0.008
+            min_spread_required = 1
+
+            success = net_profit >= min_profit_required and spread_percent >= min_spread_required
+
+            if spread_percent > 0:
+                gap = min_profit_required - net_profit
+                gap_str = f" | Falta: ${gap:.4f}" if gap > 0 else " | ✅ PRONTO"
+
+                logging.info(
+                    f"🔍 [SCANNER] {watched_pair.symbol_b} | "
+                    f"Spread: {spread_percent:.2f}% | "
+                    f"Lucro Est: ${net_profit:.4f} | "
+                    f"Alvo Min: ${min_profit_required:.4f}"
+                    f"{gap_str}"
+                )
+
+            return success
+
+        # --- 2. LÓGICA DE SAÍDA ---
+        else:
+            # ⏱️ CÁLCULO DE TIME-DECAY (DEGRADAÇÃO TEMPORAL)
+            roi_target_original = 0.012  # Alvo original de 1.2%
+            max_hold_minutes = 60.0  # Tempo limite para chegar ao "0 a 0" (1 hora)
+
+            try:
+                # Tenta ler o timestamp guardado no teu watched_pair (ajusta se o nome do atributo mudar)
+                entry_time = datetime.fromisoformat(entry_timestamp).replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                trade_age_minutes = (now - entry_time).total_seconds() / 60.0
+            except Exception:
+                trade_age_minutes = 0.0
+
+            # Aplica a redução linear
+            if trade_age_minutes >= max_hold_minutes:
+                roi_target_dynamic = 0.0
+            else:
+                factor = (max_hold_minutes - trade_age_minutes) / max_hold_minutes
+                roi_target_dynamic = roi_target_original * factor
+
+            # Garante que o alvo não fica negativo por segurança
+            roi_target_dynamic = max(roi_target_dynamic, 0.0)
+
+            # Define a nova meta dinâmica sobre o capital
+            min_net_profit_out = amount_usdc * roi_target_dynamic if amount_usdc > 0 else 0.0
+
+            # Se passou de 1 hora e o alvo é 0, o mínimo absoluto exigido passa a ser $0.00 (recuperar o capital + pagar o gás)
+            if roi_target_dynamic == 0.0:
+                min_net_profit_out = 0.0
+
+            # Cálculo de progresso para o log baseado na meta dinâmica atual
+            if min_net_profit_out == 0:
+                progress_str = f"Faltam ${abs(net_profit):.4f}" if net_profit < 0 else "✅ PRONTO"
+            else:
+                progress = (net_profit / min_net_profit_out) * 100
+                progress_str = f"{progress:.1f}%"
+
+            status_icon = "💰" if net_profit > 0 else "⏳"
+
+            # Log detalhado com o tempo decorrido e o ROI atual
+            status_msg = (
+                f"{status_icon} [MONITOR] {watched_pair.symbol_b} | "
+                f"Idade: {trade_age_minutes:.1f}m | "
+                f"Alvo ROI: {roi_target_dynamic * 100:.2f}% | "
+                f"Lucro: ${net_profit:.4f}/${min_net_profit_out:.2f} | "
+                f"Progresso: {progress_str} | Spread: {spread_percent:.2f}%"
+            )
+
+            if net_profit >= min_net_profit_out:
+                logging.info(f"✅ META DINÂMICA ALCANÇADA! {status_msg}")
+                return True
+
+            # Log de monitorização padrão
             logging.info(status_msg)
 
             return False

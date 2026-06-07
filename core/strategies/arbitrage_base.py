@@ -43,8 +43,51 @@ class ArbitrageBase:
         return self.uniswap_client.low_liquidity_cache
 
     # --- 1. MÉTODOS DE CÁLCULO CENTRALIZADOS ---
+    def calculate_net_metrics(self, price_hl, price_dex_gross, price_dex_net, amount_usdc, fee_ppm, gas_usdc,
+                              has_open_position):
+        """
+        Fórmula Única para ROI e Spread mantendo o quote original de COMPRA (USDC -> TOKEN).
+        A flag 'has_open_position' serve apenas para não duplicar as taxas de entrada na saída.
+        """
+        fee_dex_percent = fee_ppm / 1_000_000
 
-    def calculate_net_metrics(self, price_hl, price_dex_gross, price_dex_net, amount_usdc, fee_ppm, gas_usdc):
+        # 1. Quantos tokens estão em jogo (com base no preço do quote de compra)
+        if price_dex_net is not None:
+            tokens_bought = amount_usdc / price_dex_net
+            custo_reverter_dex = 0.0
+        else:
+            tokens_bought = (amount_usdc * (1 - fee_dex_percent)) / price_dex_gross
+            custo_reverter_dex = (amount_usdc * fee_dex_percent)
+
+        # =========================================================================
+        # CONFIGURAÇÃO DINÂMICA DE TAXAS CONFORME O ESTADO DO TRADE
+        # =========================================================================
+        if not has_open_position:
+            # 🟢 SE NÃO TEMOS POSIÇÃO: Descontamos o ciclo COMPLETO
+            taxa_hl_fator = 0.00070  # Abertura (0.035%) + Fecho (0.035%)
+            total_gas = gas_usdc * 2  # Gás de Entrar + Gás de Sair
+        else:
+            # 🔴 SE JÁ TEMOS POSIÇÃO ATIVA: As taxas de entrada já foram pagas na carteira!
+            # O teu monitor de saída só pode descontar o que vais gastar AGORA para fechar.
+            taxa_hl_fator = 0.00035  # Apenas a taxa de fecho da HL
+            total_gas = gas_usdc  # Apenas o gás para executar o fecho agora
+            # Nota: Se for na Solana, o teu total_gas aqui até pode ser 0 se o gas_usdc já for zero
+
+        # 2. Valor bruto estimado na Hyperliquid com o fator de taxa corrigido
+        total_recebido_hl = (tokens_bought * price_hl) * (1 - taxa_hl_fator)
+
+        # 3. LUCRO REAL LÍQUIDO
+        # Se has_open_position for True, este número vai ficar instantaneamente mais realista
+        # (mais alto) porque removemos o peso morto das taxas de entrada que já pagaste.
+        net_profit = total_recebido_hl - amount_usdc - custo_reverter_dex - total_gas
+
+        # O teu cálculo de spread original mantém-se intocado
+        spread_percent = ((price_hl / price_dex_gross) - 1) * 100
+
+        return net_profit, spread_percent
+
+    def calculate_net_metrics_old(self, price_hl, price_dex_gross, price_dex_net, amount_usdc, fee_ppm, gas_usdc,
+                                  has_open_position):
         """
         A 'Fórmula Única' para ROI e Spread.
         fee_ppm: fee da DEX em partes por milhão (ex: 3000 para 0.3%)
@@ -80,7 +123,8 @@ class ArbitrageBase:
 
     # --- 2. CONSULTA DE PREÇOS AGNÓSTICA ---
 
-    async def fetch_dex_price(self, pair: WatchedPair, pool_addr, usdc_balance_to_trade: float) -> (DexQuote | None):
+    async def fetch_dex_price(self, pair: WatchedPair, pool_addr, usdc_balance_to_trade: float,
+                              has_open_position: bool) -> (DexQuote | None):
         """
         Decide se consulta o cache do Multicall (ARB) ou a API da Jupiter (SOL).
         """
@@ -89,7 +133,8 @@ class ArbitrageBase:
                                                        addr_out=pair.addr_b,
                                                        amount_in_human=usdc_balance_to_trade,
                                                        decimals_in=pair.decimal_a,
-                                                       decimals_out=pair.decimal_b)
+                                                       decimals_out=pair.decimal_b,
+                                                       has_open_position=has_open_position)
         else:
             return self.uniswap_client.calculate_quote_local(pool_addr, pair.addr_a, pair.addr_b)
         return None
@@ -97,7 +142,7 @@ class ArbitrageBase:
     # --- 3. O NOVO LOCALIZADOR DE OPORTUNIDADES (Refatorado do teu original) ---
 
     async def find_best_dex_opportunity(self, pair: WatchedPair, price_hl: float, usdc_balance_to_trade: float,
-                                        gas_cost_usdc: float):
+                                        gas_cost_usdc: float, has_open_position: bool):
         best_opportunity = None
 
         # Filtro inicial de blacklist por par/pool
@@ -110,7 +155,7 @@ class ArbitrageBase:
                     del self.pool_blacklist[p_addr_l]
 
             # Obter cotação (Agnóstico)
-            quote = await self.fetch_dex_price(pair, p_addr_l, usdc_balance_to_trade)
+            quote = await self.fetch_dex_price(pair, p_addr_l, usdc_balance_to_trade, has_open_position)
 
             if not quote: continue
 
@@ -144,7 +189,8 @@ class ArbitrageBase:
 
             # Cálculo de Métricas Centralizado
             net_profit, spread_percent = self.calculate_net_metrics(
-                price_hl, price_dex_gross, price_dex_net, usdc_balance_to_trade, fee_dex_ppm, current_gas
+                price_hl, price_dex_gross, price_dex_net, usdc_balance_to_trade, fee_dex_ppm, current_gas,
+                has_open_position
             )
 
             # Criar objeto de oportunidade (DexOpportunity)
