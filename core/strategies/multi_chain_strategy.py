@@ -505,7 +505,8 @@ class MultiChainStrategy(ArbitrageBase):
             fee=dex_fee,
             tolerance=0.003,  # 1.5% de tolerância para garantir a saída
             chain=pair.chain,
-            quote_data=data_quote
+            quote_data=data_quote,
+            is_exit=True
         )
 
         if not viable:

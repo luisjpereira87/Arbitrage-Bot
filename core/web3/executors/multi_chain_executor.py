@@ -56,7 +56,8 @@ class MultiChainExecutor(ExecutorBase):
         return 0.0
 
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                             fee: int, tolerance: float, chain, quote_data: dict | None) -> tuple[bool, float]:
+                             fee: int, tolerance: float, chain, quote_data: dict | None, is_exit: bool) -> tuple[
+        bool, float]:
         if chain == Chains.ARBITRUM:
             return await self.arbitrum_executor.is_swap_viable(token_in, token_out, amount_in_usd, expected_out_units,
                                                                fee,

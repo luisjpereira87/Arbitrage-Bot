@@ -214,7 +214,8 @@ class SolanaExecutor(ExecutorBase, ABC):
                 return None
 
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None) -> tuple[bool, float]:
+                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None, is_exit: bool) -> \
+            tuple[bool, float]:
         try:
             t_in_info = self.config.tokens_by_address.get(token_in.lower())
             t_out_info = self.config.tokens_by_address.get(token_out.lower())
@@ -222,8 +223,13 @@ class SolanaExecutor(ExecutorBase, ABC):
             dec_in = t_in_info.decimals if t_in_info else 9
             dec_out = t_out_info.decimals if t_out_info else 6
 
-            amount_in_raw = int(amount_in_usd * 10 ** dec_in)
+            amount_in_raw_target = int(amount_in_usd * 10 ** dec_in)
             balance_raw = await self.get_token_balance(token_in, chain)
+
+            if is_exit:
+                amount_in_raw = min(amount_in_raw_target, balance_raw)
+            else:
+                amount_in_raw = amount_in_raw_target
 
             if balance_raw < amount_in_raw:
                 logging.warning(f"❌ [SOLANA] Saldo insuficiente: {balance_raw} < {amount_in_raw}")

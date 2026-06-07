@@ -325,7 +325,8 @@ class ArbitrumExecutor(ExecutorBase):
             return 0  # Retornar 0 em vez de None facilita cálculos matemáticos depois
 
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None):
+                             fee: int, tolerance: float, chain: Chains, quote_data: dict | None, is_exit: bool) -> \
+    tuple[bool, float]:
         """
         Simula o swap na Uniswap V3 de forma dinâmica usando os decimais do Config.
         """
