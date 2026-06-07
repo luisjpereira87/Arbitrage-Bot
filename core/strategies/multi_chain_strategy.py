@@ -495,16 +495,23 @@ class MultiChainStrategy(ArbitrageBase):
         4. Limpa o estado (JSON)
         """
         logging.info(f"🚀 Validando cotação final para saída em {pair.symbol_b}...")
-        expected_usdc = units * dex_price
+        # expected_usdc = units * dex_price
         # 1. Simulação Quoter (Token -> USDC)
         # Verificamos se o que vamos receber cobre o custo inicial ou a meta
+
+        # 1. Calcular o valor estimado do lote em USD para o validador
+        valor_lote_usd_estimado = units * dex_price
+
+        # O expected_out_units DEVE ser exatamente o valor que esperas receber em USDC (Moeda de Saída)
+        expected_usdc = valor_lote_usd_estimado
+
         viable, real_units_usdc = await self.wallet.is_swap_viable(
             token_in=pair.addr_b,  # Endereço do ARB
             token_out=pair.addr_a,  # Endereço do USDC
-            amount_in_usd=units,
+            amount_in_usd=valor_lote_usd_estimado,
             expected_out_units=expected_usdc,
             fee=dex_fee,
-            tolerance=0.003,  # 1.5% de tolerância para garantir a saída
+            tolerance=0.015,  # 1.5% de tolerância para garantir a saída
             chain=pair.chain,
             quote_data=data_quote,
             is_exit=True
