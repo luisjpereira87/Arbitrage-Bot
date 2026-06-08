@@ -5,3 +5,4 @@ ccxt
 aiohttp
 solana
 solders
+httpx

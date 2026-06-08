@@ -17,6 +17,7 @@ from core.config.properties_base import PropertiesBase
 from core.config.properties_multi import PropertiesMulti
 from core.dclass.chains_enum import Chains
 from core.web3.executors.executor_base import ExecutorBase
+from core.web3.executors.jito_executor import JitoExecutor
 from core.web3.rpcs.solana_manager import SolanaManager
 
 
@@ -32,6 +33,8 @@ class SolanaExecutor(ExecutorBase, ABC):
         self.session: Optional[aiohttp.ClientSession] = None
         # self.priority_fee = 50000  # Lamports (~$0.01)
         self.priority_fee = 1500000
+
+        self.jito_executor = JitoExecutor(self.wallet)
 
         asyncio.run(self.__mapear_e_preparar_tokens())
 
@@ -92,6 +95,139 @@ class SolanaExecutor(ExecutorBase, ABC):
 
     async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
                                amount_usd: float, chain: Chains, quote_data: dict | None):
+
+        # 1. TRATAMENTO DO VALOR E SALDO
+        val_in_raw = int(amount_usd)
+        t_address = tokens_list[0]
+        w_address = str(self.wallet.pubkey())
+
+        try:
+            contract_balance = await self.get_token_balance(t_address, chain)
+        except Exception as e:
+            print(f"❌ [PROD] Falha ao ler saldo no nó: {e}")
+            return None
+
+        if contract_balance < val_in_raw:
+            diff = val_in_raw - contract_balance
+            if diff < 100000:  # Tolerância de poeira (micro-ajuste)
+                val_in_raw = contract_balance
+            else:
+                print(f"❌ [PROD] Saldo insuficiente abortado: {contract_balance} < {val_in_raw}")
+                return None
+
+        # Endpoints de contingência
+        jupiter_endpoints = [
+            "https://public.jupiterapi.com/swap",
+            "https://api.jup.ag/swap/v6/swap"  # Endpoint principal v6 oficial
+        ]
+
+        max_jupiter_retries = 3
+        for attempt in range(max_jupiter_retries):
+            try:
+                if not quote_data:
+                    print("❌ [PROD] Sem dados de Quote válidos.")
+                    return None
+
+                # --- 2. CONSTRUIR SWAP JUPITER (SESSÃO PROTEGIDA) ---
+                swap_url = jupiter_endpoints[attempt % len(jupiter_endpoints)]
+                payload = {
+                    "quoteResponse": quote_data,
+                    "userPublicKey": w_address,
+                    "wrapAndUnwrapSol": True,
+                    "dynamicComputeUnitLimit": True,
+                    "feeAccount": w_address,
+                    "prioritizationFeeLamports": 0,  # 🛠️ MODIFICADO: Prioridade agora vai na gorjeta do Jito
+                    "skipUserAccountsRpcCalls": False,
+                    "asLegacyTransaction": False  # 🛠️ MODIFICADO: Obrigatório False (V0) para compatibilidade Jito
+                }
+
+                # 🛠️ RESOLVIDO: 'async with' limpa as conexões da memória automaticamente e evita o erro de Unclosed Session
+                session = self._get_session()
+                async with session.post(swap_url, json=payload, timeout=2.0) as resp:
+                    if resp.status != 200:
+                        print(f"⚠️ [JUPITER] Erro HTTP {resp.status} em {swap_url}")
+                        if resp.status in [429, 500, 503]:
+                            raise Exception(f"HTTP_{resp.status}")
+                        return None
+                    swap_res = await resp.json()
+                    tx_base64 = swap_res['swapTransaction']
+
+                # --- 3. ASSINATURA NATIVA (MÉTODO COMPILADO EM RUST) ---
+                raw_tx = base64.b64decode(tx_base64)
+                v_tx_jupiter = VersionedTransaction.from_bytes(raw_tx)
+
+                # Compilação e fusão de assinaturas em baixo nível (Rust)
+                v_tx = VersionedTransaction(v_tx_jupiter.message, [self.wallet])
+
+                # --- 4. ENVIO DE ALTA VELOCIDADE VIA JITO BUNDLE ---
+                # 🚀 OPTIMIZAÇÃO JITO: Retiramos o envio normal e enviamos para a rede privada
+                try:
+                    # Captura o blockhash mais recente do teu gestor RPC atual para assinar a gorjeta
+                    blockhash_resp = await self.solana_manager.solana.get_latest_blockhash()
+                    recent_blockhash = blockhash_resp.value.blockhash
+
+                    # Executa o envio em pacote (Bundle)
+                    # 150000 lamports = 0.00015 SOL (Ajusta se o mercado estiver muito rápido)
+                    bundle_id = self.jito_executor.send_jito_bundle(v_tx, recent_blockhash, tip_lamports=150000)
+                    # bundle_id = await self.send_jito_bundle(v_tx, recent_blockhash, tip_lamports=150000)
+
+                    if not bundle_id:
+                        print("❌ [PROD] Falha ao submeter o pacote ao Block Engine do Jito.")
+                        return None
+
+                except Exception as jito_error:
+                    print(f"🚨 [JITO] Transação rejeitada no pipeline do Block Engine: {jito_error}")
+                    return None
+
+                # --- 5. POLLING DE CONFIRMAÇÃO OTIMIZADO PARA JITO ---
+                # Nota: Transações que dão Slippage (6001) são descartadas antes de ir a bloco.
+                # Se der "Dropped", o bot simplesmente sai sem perder taxas de rede.
+                confirmed = False
+                for check_attempt in range(30):  # 15 Segundos de tolerância agressiva para arbitragem
+                    await asyncio.sleep(0.5)
+                    try:
+                        # Usamos a assinatura da transação da JUPITER para verificar se ela foi incluída no bloco
+                        status_resp = await self.solana_manager.solana.get_signature_statuses([v_tx.signatures[0]])
+                        if status_resp.value and status_resp.value[0] is not None:
+                            status = status_resp.value[0]
+
+                            if status.err is not None:
+                                print(f"❌ [REVERT] Transação falhou internamente na chain: {status.err}")
+                                return None
+
+                            if status.confirmation_status is not None:
+                                confirmed = True
+                                break
+                    except Exception:
+                        continue  # Suporta falhas temporárias de rede do RPC
+
+                if not confirmed:
+                    print(f"⚠️ [DROP/EXPIRED] O Jito descartou o pacote (provável Slippage) ou a transação expirou.")
+                    return None
+
+                return str(v_tx.signatures[0])
+
+            except Exception as e:
+                error_str = str(e).lower()
+                is_network_error = any(x in error_str for x in [
+                    "clientconnectorerror", "dns", "timeout", "cannot connect",
+                    "401", "429", "403", "500", "503", "unauthorized", "http_"
+                ])
+
+                if is_network_error and attempt < max_jupiter_retries - 1:
+                    await asyncio.sleep(0.1)  # Pequeno respiro antes de mudar de rota
+                    continue
+
+                elif is_network_error:
+                    print(f"🚨 [PROD] Falha total de rede. Rotacionando RPC para a próxima oportunidade.")
+                    self.solana_manager.rotate_rpc()
+                    return None
+
+                print(f"❌ [CRÍTICO] Erro de lógica não contornável: {e}")
+                return None
+
+    async def send_transaction_(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
+                                amount_usd: float, chain: Chains, quote_data: dict | None):
 
         # 1. TRATAMENTO DO VALOR E SALDO
         val_in_raw = int(amount_usd)
@@ -243,6 +379,9 @@ class SolanaExecutor(ExecutorBase, ABC):
             amount_out_raw = int(quote_data['outAmount'])
             amount_out_real = amount_out_raw / 10 ** dec_out
 
+            logging.info(
+                f"DEBUG JUPITER: A receber {amount_out_real:.6f} unidades do token de saída (Decimais usados: {dec_out})")
+
             # Aplicamos a tolerância passada (ex: 0.003 para 0.3% de folga)
             # Se o Short pede 12.825, com 0.3% aceitamos até 12.787
             min_acceptable = expected_out_units * (1 - tolerance)
@@ -255,44 +394,6 @@ class SolanaExecutor(ExecutorBase, ABC):
 
             logging.info(
                 f"✅ Swap validado (SOLANA): Receberás aprox. {amount_out_real:.6f} {t_out_info.symbol if t_out_info else ''} (Min aceitável era: {min_acceptable:.6f})")
-            return True, amount_out_real
-
-        except Exception as e:
-            logging.error(f"❌ Erro na validação Solana: {e}")
-            return False, 0
-
-    async def is_swap_viable_(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
-                              fee: int, tolerance: float, chain: Chains, quote_data: dict | None) -> tuple[bool, float]:
-        try:
-            t_in_info = self.config.tokens_by_address.get(token_in.lower())
-            t_out_info = self.config.tokens_by_address.get(token_out.lower())
-
-            dec_in = t_in_info.decimals if t_in_info else 9
-            dec_out = t_out_info.decimals if t_out_info else 6
-
-            amount_in_raw = int(amount_in_usd * 10 ** dec_in)
-            balance_raw = await self.get_token_balance(token_in, chain)
-
-            if balance_raw < amount_in_raw:
-                logging.warning(f"❌ [SOLANA] Saldo insuficiente: {balance_raw} < {amount_in_raw}")
-                return False, 0
-
-            if not quote_data:
-                logging.error("❌ Erro: quote_data da Jupiter é obrigatório para validação na Solana")
-                return False, 0
-
-            amount_out_raw = int(quote_data['outAmount'])
-            amount_out_real = amount_out_raw / 10 ** dec_out
-
-            min_acceptable = expected_out_units * (1 - tolerance)
-
-            if amount_out_real < min_acceptable:
-                logging.warning(
-                    f"⚠️ Swap REJEITADO (SOLANA): Real {amount_out_real:.6f} < Min {min_acceptable:.6f}")
-                return False, amount_out_real
-
-            logging.info(
-                f"✅ Swap validado (SOLANA): Receberás aprox. {amount_out_real:.6f} {t_out_info.symbol if t_out_info else ''}")
             return True, amount_out_real
 
         except Exception as e:

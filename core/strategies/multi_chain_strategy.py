@@ -177,11 +177,18 @@ class MultiChainStrategy(ArbitrageBase):
                 continue
 
             hl_price = price_data.bid
-            price_hl_slippage = hl_price * (1 - 0.005)
+            # price_hl_slippage = hl_price * (1 - 0.005)
+
+            hl_price = hl_price * (1 - 0.005) if not has_open_position else hl_price
+
+            qt_tokens = 0
+            if has_open_position:
+                qt_tokens = min(active_tokens[symbol_base], active_position.units_dex)
 
             # Procura oportunidades na DEX correspondente
-            opportunity = await self.find_best_dex_opportunity(pair, price_hl_slippage, usdc_balance_to_trade,
-                                                               gas_cost_usdc, has_open_position)
+
+            opportunity = await self.find_best_dex_opportunity(pair, hl_price, usdc_balance_to_trade,
+                                                               gas_cost_usdc, has_open_position, qt_tokens)
             if not opportunity:
                 await asyncio.sleep(1.0)
                 continue

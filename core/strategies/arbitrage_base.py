@@ -124,17 +124,32 @@ class ArbitrageBase:
     # --- 2. CONSULTA DE PREÇOS AGNÓSTICA ---
 
     async def fetch_dex_price(self, pair: WatchedPair, pool_addr, usdc_balance_to_trade: float,
-                              has_open_position: bool) -> (DexQuote | None):
+                              has_open_position: bool, qt_tokens: float) -> (DexQuote | None):
         """
         Decide se consulta o cache do Multicall (ARB) ou a API da Jupiter (SOL).
         """
         if pair.chain == Chains.SOLANA:
-            return await self.jupiter_client.get_quote(addr_in=pair.addr_a,
-                                                       addr_out=pair.addr_b,
-                                                       amount_in_human=usdc_balance_to_trade,
-                                                       decimals_in=pair.decimal_a,
-                                                       decimals_out=pair.decimal_b,
-                                                       has_open_position=has_open_position)
+
+            if has_open_position:
+                # SE FOR SAÍDA:
+                addr_in = pair.addr_b  # POPCAT entra
+                addr_out = pair.addr_a  # USDC sai
+                decimals_in = pair.decimal_b
+                decimals_out = pair.decimal_a
+                amount_in = qt_tokens  # <--- OBRIGATÓRIO: Passar as UNIDADES DE TOKEN (611.67)
+            else:
+                # SE FOR ENTRADA:
+                addr_in = pair.addr_a  # USDC entra
+                addr_out = pair.addr_b  # POPCAT sai
+                decimals_in = pair.decimal_a
+                decimals_out = pair.decimal_b
+                amount_in = usdc_balance_to_trade  # Passar o VALOR EM USDC (23.85)
+
+            return await self.jupiter_client.get_quote(addr_in=addr_in,
+                                                       addr_out=addr_out,
+                                                       amount_in_human=amount_in,
+                                                       decimals_in=decimals_in,
+                                                       decimals_out=decimals_out)
         else:
             return self.uniswap_client.calculate_quote_local(pool_addr, pair.addr_a, pair.addr_b)
         return None
@@ -142,7 +157,7 @@ class ArbitrageBase:
     # --- 3. O NOVO LOCALIZADOR DE OPORTUNIDADES (Refatorado do teu original) ---
 
     async def find_best_dex_opportunity(self, pair: WatchedPair, price_hl: float, usdc_balance_to_trade: float,
-                                        gas_cost_usdc: float, has_open_position: bool):
+                                        gas_cost_usdc: float, has_open_position: bool, qt_tokens: float):
         best_opportunity = None
 
         # Filtro inicial de blacklist por par/pool
@@ -155,7 +170,7 @@ class ArbitrageBase:
                     del self.pool_blacklist[p_addr_l]
 
             # Obter cotação (Agnóstico)
-            quote = await self.fetch_dex_price(pair, p_addr_l, usdc_balance_to_trade, has_open_position)
+            quote = await self.fetch_dex_price(pair, p_addr_l, usdc_balance_to_trade, has_open_position, qt_tokens)
 
             if not quote: continue
 
