@@ -6,3 +6,4 @@ aiohttp
 solana
 solders
 httpx
+base58
