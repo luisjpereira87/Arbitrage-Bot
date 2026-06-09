@@ -15,10 +15,7 @@ class JitoExecutor:
         # Endereço do Block Engine do Jito em Amesterdão (mais perto de Portugal/Europa)
         self.jito_url = "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles"
 
-        # Lista oficial de contas de gorjeta do Jito (podes usar qualquer uma)
-        self.jito_tip_account = Pubkey.from_string("Cw8CFyTrG62ewLM7SehcU4wh2vY9RFK6wS9X9MGzA6R4")
-
-        self.JITO_TIP_ACCOUNTS = [
+        self.jito_tip_accounts = [
             Pubkey.from_string("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
             Pubkey.from_string("Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY"),
             Pubkey.from_string("HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe"),
@@ -37,7 +34,7 @@ class JitoExecutor:
         agrupa ambas num Bundle e envia para o Block Engine do Jito.
         """
         jito_url = "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles"
-        jito_tip_account = Pubkey.from_string(random.choice(self.JITO_TIP_ACCOUNTS))
+        jito_tip_account = random.choice(self.jito_tip_accounts)
 
         try:
             # 1. Cria a instrução de transferência para a gorjeta do Jito
