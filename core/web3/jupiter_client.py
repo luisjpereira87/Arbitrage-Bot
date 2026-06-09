@@ -62,7 +62,7 @@ class JupiterClient:
             "inputMint": addr_in,
             "outputMint": addr_out,
             "amount": str(amount_in_base),
-            "slippageBps": "100",
+            "slippageBps": "200",
             # "excludeDirectRoute": "false"
             "excludeDirectRoute": "true" if exclude_direct_route else "false",
             "restrictIntermediateTokens": "true" if restrict_intermediate_tokens else "false",
