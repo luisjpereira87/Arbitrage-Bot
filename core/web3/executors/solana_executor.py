@@ -168,7 +168,7 @@ class SolanaExecutor(ExecutorBase, ABC):
 
                     # Executa o envio em pacote (Bundle)
                     # 150000 lamports = 0.00015 SOL (Ajusta se o mercado estiver muito rápido)
-                    bundle_id = await self.jito_executor.send_jito_bundle(v_tx, recent_blockhash, tip_lamports=150000)
+                    bundle_id = await self.jito_executor.send_jito_bundle(v_tx, recent_blockhash, tip_lamports=250000)
                     # bundle_id = await self.send_jito_bundle(v_tx, recent_blockhash, tip_lamports=150000)
 
                     if not bundle_id:
