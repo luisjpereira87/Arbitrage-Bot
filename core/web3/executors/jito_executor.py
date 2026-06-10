@@ -15,6 +15,13 @@ class JitoExecutor:
         # Endereço do Block Engine do Jito em Amesterdão (mais perto de Portugal/Europa)
         self.jito_url = "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles"
 
+        self.jito_urls = [
+            "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles",  # Principal (Europa)
+            "https://frankfurt.mainnet.block-engine.jito.wtf/api/v1/bundles",  # Secundário (Europa)
+            "https://ny.mainnet.block-engine.jito.wtf/api/v1/bundles",  # Alternativo (EUA Este)
+            "https://mainnet.block-engine.jito.wtf/api/v1/bundles"  # Geral (Default)
+        ]
+
         self.jito_tip_accounts = [
             Pubkey.from_string("ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49"),
             Pubkey.from_string("Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY"),
@@ -33,7 +40,7 @@ class JitoExecutor:
         Recebe a transação da Jupiter já assinada (v_tx), cria a transação da gorjeta,
         agrupa ambas num Bundle e envia para o Block Engine do Jito.
         """
-        jito_url = "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles"
+        # jito_url = "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1/bundles"
         jito_tip_account = random.choice(self.jito_tip_accounts)
 
         try:
@@ -69,15 +76,21 @@ class JitoExecutor:
 
             # 5. Envia diretamente para o Block Engine de Amesterdão
             async with httpx.AsyncClient() as client:
-                response = await client.post(jito_url, json=payload, timeout=10.0)
-                result = response.json()
+                for url in self.jito_urls:
+                    try:
+                        response = await client.post(url, json=payload, timeout=10.0)
+                        result = response.json()
 
-                if "result" in result:
-                    print(f"🚀 [JITO] Bundle enviado com sucesso! ID: {result['result']}")
-                    return result['result']
-                else:
-                    print(f"❌ [JITO] Erro no Block Engine: {result}")
-                    return None
+                        if "result" in result:
+                            print(f"🚀 [JITO] Bundle enviado com sucesso! ID: {result['result']}")
+                            return result['result']
+                        else:
+                            print(f"❌ [JITO] Erro no Block Engine: {result}")
+                            return None
+
+                    except Exception as url_err:
+                        print(f"⚠️ Falha de conexão com {url}: {url_err}")
+                        continue
 
         except Exception as e:
             print(f"❌ [JITO] Falha crítica no método send_jito_bundle: {e}")
