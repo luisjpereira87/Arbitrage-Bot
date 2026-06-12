@@ -5,7 +5,7 @@ from abc import ABC
 from typing import Optional
 
 import aiohttp
-from solana.rpc.commitment import Commitment, Processed
+from solana.rpc.commitment import Commitment
 from solana.rpc.types import TxOpts, TokenAccountOpts
 from solders.keypair import Keypair
 from solders.message import Message
@@ -87,7 +87,8 @@ class SolanaExecutor(ExecutorBase, ABC):
                 return 0
 
         except Exception as e:
-            if any(x in str(e) for x in ["401", "429", "403", "500", "503", "timeout", "unauthorized"]):
+            if any(x in str(e) for x in
+                   ["401", "429", "403", "500", "503", "timeout", "unauthorized", "Event loop is closed"]):
                 self.solana_manager.rotate_rpc()
                 return await self.get_token_balance(token_address, chain)  # Tenta de novo com novo RPC
             logging.error(f"❌ Erro ao ler saldo na Solana: {e}")
@@ -163,8 +164,9 @@ class SolanaExecutor(ExecutorBase, ABC):
                 # 🚀 OPTIMIZAÇÃO JITO: Retiramos o envio normal e enviamos para a rede privada
                 try:
                     # Captura o blockhash mais recente do teu gestor RPC atual para assinar a gorjeta
-                    blockhash_resp = await self.solana_manager.solana.get_latest_blockhash(commitment=Processed)
-                    recent_blockhash = blockhash_resp.value.blockhash
+                    # blockhash_resp = await self.solana_manager.solana.get_latest_blockhash(commitment=Processed)
+                    # recent_blockhash = blockhash_resp.value.blockhash
+                    recent_blockhash = v_tx.message.recent_blockhash
 
                     # Executa o envio em pacote (Bundle)
                     # 150000 lamports = 0.00015 SOL (Ajusta se o mercado estiver muito rápido)
