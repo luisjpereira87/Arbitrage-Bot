@@ -1,6 +1,7 @@
 # This is a sample Python script.
 import asyncio
 import logging
+import sys
 
 from dotenv import load_dotenv
 
@@ -20,7 +21,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
