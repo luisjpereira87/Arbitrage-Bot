@@ -4,7 +4,7 @@ import logging
 
 from dotenv import load_dotenv
 
-from core.bots.multi_chain_bot import MultiChainBot
+from core.bots.cex_bot import CexBot
 from core.config.properties_dex import PropertiesDex
 from core.config.properties_multi import PropertiesMulti
 
@@ -36,9 +36,11 @@ if __name__ == '__main__':
     # --- EXECUÇÃO -
     # solana_bot = SolanaBot()
     # asyncio.run(solana_bot.scan_jupiter_triangles())
+    cex_bot = CexBot()
+    asyncio.run(cex_bot.test_spread_loop())
     # TradePosition.empty_position()
-    multi_chain_bot = MultiChainBot(properties_multi)
-    asyncio.run(multi_chain_bot.run())
+    # multi_chain_bot = MultiChainBot(properties_multi)
+    # asyncio.run(multi_chain_bot.run())
 
     # test = TestSolana()
     # asyncio.run(test.test_execute())

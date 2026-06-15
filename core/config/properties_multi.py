@@ -20,6 +20,8 @@ class PropertiesMulti(PropertiesBase):
 
     PRIVATE_KEY_WALLET_SOLANA = os.getenv("PRIVATE_KEY_WALLET_SOLANA")
 
+    LIGHTER_SIGNER_FILE = os.getenv("LIGHTER_SIGNER_FILE")
+
     CONTRACT_ABI = [
         {
             "inputs": [

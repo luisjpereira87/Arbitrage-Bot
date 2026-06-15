@@ -136,3 +136,97 @@ class JupiterClient:
 
         logging.error("❌ Todas as URLs de cotação da Jupiter falharam neste ciclo.")
         return None
+
+    async def get_quote_triangular(self, addr_in: str, addr_out: str, amount_in_human: float, decimals_in: int,
+                                   decimals_out: int, exclude_direct_route=False,
+                                   restrict_intermediate_tokens=False,
+                                   intermediate_tokens_mint: Optional[str] = None) -> Optional[DexQuote]:
+        """
+        Consulta a API da Jupiter tratando internamente Rate Limits, Timeouts e parsing de rotas.
+        """
+        if amount_in_human <= 0:
+            return None
+
+        session = await self.init_session()
+        await self._rate_limiter_buffer()
+
+        # Conversão para unidade base da blockchain (inteiro em string)
+        amount_in_base = int(amount_in_human * (10 ** decimals_in))
+
+        params = {
+            "inputMint": addr_in,
+            "outputMint": addr_out,
+            "amount": str(amount_in_base),
+            "slippageBps": "200",
+            "excludeDirectRoute": "true" if exclude_direct_route else "false",
+            "restrictIntermediateTokens": "true" if restrict_intermediate_tokens else "false",
+            "asLegacyTransaction": "true"
+        }
+
+        # 🔄 ÚNICA ADIÇÃO: Se queres forçar a rota pelo teu loop de stables
+        if intermediate_tokens_mint:
+            params["restrictIntermediateTokens"] = "true"
+            params["intermediateTokens"] = intermediate_tokens_mint
+
+        headers = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+
+        # Loop de Failover nativo
+        for url in self.jupiter_urls:
+            try:
+                async with session.get(url, params=params, headers=headers, timeout=4) as resp:
+
+                    if resp.status == 429:
+                        logging.warning(f"⚠️ Jupiter Rate Limit (429) em: {url}. Tentando failover imediato...")
+                        continue
+
+                    if resp.status != 200:
+                        logging.warning(f"⚠️ Jupiter HTTP {resp.status} em: {url}. Pulando...")
+                        continue
+
+                    data = await resp.json()
+
+                    # 1. Parsing do Preço Líquido (outAmount total)
+                    out_raw = int(data['outAmount'])
+                    amount_out_human = out_raw / (10 ** decimals_out)
+
+                    is_selling_to_usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" in addr_out
+
+                    if is_selling_to_usdc:
+                        raw_price_dex_net = amount_in_human / amount_out_human
+                    else:
+                        raw_price_dex_net = amount_out_human / amount_in_human
+
+                    # 2. Parsing Cirúrgico do Preço Bruto (Último Passo da Rota)
+                    try:
+                        route_plan = data.get('routePlan', [])
+                        if route_plan:
+                            last_step = route_plan[-1]
+                            out_raw_gross = int(last_step.get('swapInfo', {}).get('outAmount', 0))
+                        else:
+                            out_raw_gross = 0
+
+                        if out_raw_gross > 0:
+                            amount_out_human_gross = out_raw_gross / (10 ** decimals_out)
+                            if is_selling_to_usdc:
+                                raw_price_dex_gross = amount_in_human / amount_out_human_gross
+                            else:
+                                raw_price_dex_gross = amount_out_human_gross / amount_in_human
+                        else:
+                            raw_price_dex_gross = raw_price_dex_net
+                    except Exception:
+                        raw_price_dex_gross = raw_price_dex_net
+
+                    return DexQuote(
+                        price_dex_gross=raw_price_dex_gross,
+                        price_dex_net=raw_price_dex_net,
+                        direction=True,
+                        fee_dex_ppm=1000,
+                        data_quote=data
+                    )
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                logging.warning(f"🌐 Falha de conexão na URL {url}: {type(e).__name__}. Tentando failover...")
+                continue
+
+        logging.error("❌ Todas as URLs de cotação da Jupiter falharam neste ciclo.")
+        return None
