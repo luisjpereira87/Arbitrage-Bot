@@ -78,14 +78,16 @@ class CexBot:
             "BTC/USDC:USDC",
             "ETH/USDC:USDC",
             "SOL/USDC:USDC",
-            # "AVAX/USDC:USDC",
-            # "POPCAT/USDC:USDC",
-            # "FARTCOIN/USDC:USDC",
-            # "HYPE/USDC:USDC",
-            # "TRUMP/USDC:USDC",
-            # "ZEC/USDC:USDC",
-            # "AAVE/USDC:USDC",
-            # "BNB/USDC:USDC",
+            "AVAX/USDC:USDC",
+            "POPCAT/USDC:USDC",
+            "FARTCOIN/USDC:USDC",
+            "HYPE/USDC:USDC",
+            "TRUMP/USDC:USDC",
+            "ZEC/USDC:USDC",
+            "AAVE/USDC:USDC",
+            "BNB/USDC:USDC",
+            "UNI/USDC:USDC",
+            "WIF/USDC:USDC"
         ]
 
         self.blacklist = set()
