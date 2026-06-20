@@ -34,5 +34,8 @@ class ExecutorBase(ABC):
     @abstractmethod
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
                              fee: int, tolerance: float, chain: Chains, quote_data: dict | None, is_exit: bool) -> \
-    tuple[bool, float]:
+            tuple[bool, float]:
+        pass
+
+    async def cleanup_wallet(self, threshold_usdc_value: float = 20.0):
         pass

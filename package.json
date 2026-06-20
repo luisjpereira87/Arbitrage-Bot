@@ -1,0 +1,29 @@
+{
+  "name": "arbitrage_bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luisjpereira87/Arbitrage-Bot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/luisjpereira87/Arbitrage-Bot/issues"
+  },
+  "homepage": "https://github.com/luisjpereira87/Arbitrage-Bot#readme",
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@jup-ag/api": "^6.0.48",
+    "@meteora-ag/dlmm": "^1.9.10",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "dotenv": "^17.4.2"
+  }
+}

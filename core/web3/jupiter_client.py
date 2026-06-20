@@ -122,9 +122,14 @@ class JupiterClient:
                     except Exception:
                         raw_price_dex_gross = raw_price_dex_net
 
+                    price_dex_gross = 1 / raw_price_dex_gross if raw_price_dex_gross > 0 else 0.0
+                    price_dex_net = None
+                    if raw_price_dex_net is not None and raw_price_dex_net > 0:
+                        price_dex_net = 1 / raw_price_dex_net
+
                     return DexQuote(
-                        price_dex_gross=raw_price_dex_gross,
-                        price_dex_net=raw_price_dex_net,
+                        price_dex_gross=price_dex_gross,
+                        price_dex_net=price_dex_net,
                         direction=True,
                         fee_dex_ppm=1000,  # Padrão estatístico mapeado por ti
                         data_quote=data

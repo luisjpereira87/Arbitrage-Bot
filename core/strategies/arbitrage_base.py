@@ -174,18 +174,20 @@ class ArbitrageBase:
 
             if not quote: continue
 
-            raw_price_dex_gross = quote.price_dex_gross
-            raw_price_dex_net = quote.price_dex_net
+            price_dex_gross = quote.price_dex_gross
+            price_dex_net = quote.price_dex_net
             direction = quote.direction
             fee_dex_ppm = quote.fee_dex_ppm
             data_quote = quote.data_quote
 
             # raw_price_dex, direction, fee_dex_ppm, data_quote = quote
             # price_dex_gross = 1 / raw_price_dex_gross
+            """
             price_dex_gross = 1 / raw_price_dex_gross if raw_price_dex_gross > 0 else 0.0
             price_dex_net = None
             if raw_price_dex_net is not None and raw_price_dex_net > 0:
                 price_dex_net = 1 / raw_price_dex_net
+            """
             # price_dex = raw_price_dex
 
             """
