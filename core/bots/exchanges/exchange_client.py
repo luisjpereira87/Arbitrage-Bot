@@ -23,10 +23,16 @@ class ExchangeClient(ExchangeBase, ABC):
 
         self.realtime_exposure = {}
 
+        self.account_index_lighter = 729593
+        self.api_key_index_lighter = 254
+
+        # print("AQUIII", self.exchange.options.get('api_secret'))
         if "lighter" in str(self.exchange.id).lower():
+            # print("AQUIII", self.exchange.options.get('accountIndex'))
+            # print("AQUIII", self.exchange.options.get('apiKeyIndex'))
             # Configurações estritas globais exigidas pela Lighter
-            self.exchange.options['accountIndex'] = 729593
-            self.exchange.options['apiKeyIndex'] = 254
+            # self.exchange.options['accountIndex'] = self.account_index_lighter
+            # self.exchange.options['apiKeyIndex'] = self.api_key_index_lighter
             self.exchange.options['builderFee'] = False
             self.exchange.options['approvedBuilderFee'] = True
 
@@ -371,6 +377,16 @@ class ExchangeClient(ExchangeBase, ABC):
             logging.error(f"❌ Erro ao fechar posição: {e}")
             raise
 
+    async def get_index(self):
+        if "lighter" in str(self.exchange.id).lower():
+            raw_acc = await self.exchange.handle_account_index({}, 'createOrder', 'accountIndex',
+                                                               'account_index')
+            raw_api = self.exchange.handle_api_key_index({}, 'loadAccount', 'apiKeyIndex', 'api_key_index')
+
+            print("accountIndex", raw_acc)
+            print("apiKeyIndex", raw_api)
+        return True
+
     async def _custom_fetch_nonce_lighter(self, *args, **kwargs) -> (int | None):
         """
         Método robusto que substitui o fetch_nonce do CCXT.
@@ -381,20 +397,6 @@ class ExchangeClient(ExchangeBase, ABC):
                 # 1. Tenta ir buscar primeiro às opções configuradas no main.py
                 account_index = self.exchange.options.get('accountIndex')
                 api_key_index = self.exchange.options.get('apiKeyIndex')
-
-                # 2. Se NÃO estiver nas opções, chama os métodos do CCXT
-                if account_index is None:
-                    raw_acc = await self.exchange.handle_account_index({}, 'createOrder', 'accountIndex',
-                                                                       'account_index')
-                    account_index = "".join(filter(str.isdigit, str(raw_acc)))
-
-                if api_key_index is None:
-                    raw_api = self.exchange.handle_api_key_index({}, 'loadAccount', 'apiKeyIndex', 'api_key_index')
-                    api_key_index = "".join(filter(str.isdigit, str(raw_api)))
-
-                # 3. Garantia final/Fallback com os teus IDs REAIS de Mainnet
-                account_index = int(account_index) if account_index else 729593
-                api_key_index = int(api_key_index) if api_key_index else 254
 
                 # 🪐 RESOLUÇÃO DIRETA E SEM ERROS DO URL:
                 urls_config = getattr(self.exchange, 'urls', {})
@@ -431,3 +433,45 @@ class ExchangeClient(ExchangeBase, ABC):
                 logging.debug(f"⚡ [Lighter Engine] Nonce incrementado localmente em memória: {self._lighter_nonce}")
 
             return self._lighter_nonce
+
+    async def validate_lighter_client(self):
+        if "lighter" not in str(self.exchange.id).lower():
+            return True
+
+        try:
+            await self.exchange.load_markets()
+
+            # 1. O que definimos nas options
+            opt_acc = str(self.exchange.options.get('accountIndex', ''))
+            opt_api = str(self.exchange.options.get('apiKeyIndex', ''))
+
+            # 2. O que o CCXT vai usar (o que vem do handle)
+            handle_acc = getattr(self.exchange, 'handle_account_index', None)
+            handle_api = getattr(self.exchange, 'handle_api_key_index', None)
+            real_acc = None
+            real_api = None
+            if handle_acc:
+                raw_acc = await handle_acc({}, 'createOrder', 'accountIndex', 'account_index')
+                data_to_filter = str(raw_acc) if raw_acc is not None else ""
+                real_acc = "".join(filter(lambda x: x.isdigit(), data_to_filter))
+
+            if handle_api:
+                raw_api = handle_api({}, 'loadAccount', 'apiKeyIndex', 'api_key_index')
+                data_to_filter = str(raw_api) if raw_api is not None else ""
+                real_api = "".join(filter(lambda x: x.isdigit(), data_to_filter))
+
+            # 3. Comparação de integridade
+            if opt_acc != real_acc or opt_api != real_api:
+                logging.error(
+                    f"❌ MISMATCH DE CONFIGURAÇÃO! Options: Acc={opt_acc}/API={opt_api} vs CCXT: Acc={real_acc}/API={real_api}")
+                return False
+
+            if not real_acc or not real_api:
+                logging.error("❌ Índices vazios detectados!")
+                return False
+
+            logging.info(f"✅ Integridade validada: Acc={real_acc}, API={real_api}")
+            return True
+        except Exception as e:
+            logging.error(f"❌ Erro na validação: {e}")
+            return False

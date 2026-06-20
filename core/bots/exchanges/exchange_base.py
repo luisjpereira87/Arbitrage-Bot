@@ -52,3 +52,7 @@ class ExchangeBase(ABC):
     @abstractmethod
     async def print_balance(self):
         pass
+
+    @abstractmethod
+    async def validate_lighter_client(self):
+        pass

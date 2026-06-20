@@ -16,14 +16,6 @@ from core.dclass.cex_type_enum import CexType
 from core.dclass.signal_enum import Signal
 from core.utils.cex_trade_position import CexTradePosition
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
-
 
 class CexBot:
     def __init__(self):
@@ -294,6 +286,10 @@ class CexBot:
         qty = cex_opportunity.qtd_pair
         leverage = 1.0
 
+        if not await self.lighter_exchange.validate_lighter_client():
+            logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")
+            return False
+
         if cex_opportunity.type == CexType.HL_TO_LIGHTER:
             hl_signal, lighter_signal = Signal.BUY, Signal.SELL
             hl_price, lighter_price = cex_opportunity.buy_price, cex_opportunity.sell_price
@@ -343,13 +339,13 @@ class CexBot:
                 timestamp=datetime.now().isoformat()
             ))
             self.active_positions = CexTradePosition.load_all_positions()
-            return
+            return True
 
         # Caso B: Ambas falharam (Azar na rede, mas capital está seguro)
         if not hl_success and not lighter_success:
             print(
                 f"❌ [FALHA DUPLA] Ambas as exchanges rejeitaram as ordens. Nenhum risco gerado. Erros: HL({res_hl}) | Lighter({res_lighter})")
-            return
+            return False
 
         # 🚨 CASO CRÍTICO 1: HL executou, mas Lighter FALHOU
         if hl_success and not lighter_success:
@@ -526,7 +522,7 @@ class CexBot:
                 self.last_balance_update = current_time
             except Exception as e:
                 # Se a API falhar por instabilidade, o bot não para; mantém a cache anterior
-                print(f"\n⚠️ Erro temporário ao atualizar saldos via REST: {e}")
+                logging.error(f"\n⚠️ Erro temporário ao atualizar saldos via REST: {e}")
 
     async def is_active_positions(self, symbol: str) -> bool:
         """Valida se existe alguma posição aberta em qualquer uma das DEXs (REST/Cache)."""
@@ -537,14 +533,16 @@ class CexBot:
             return hl_pos is not None or lighter_pos is not None
 
         except Exception as e:
-            print(f"⚠️ [API] Erro ao checar posições em tempo real para {symbol}: {e}")
+            logging.error(f"⚠️ [API] Erro ao checar posições em tempo real para {symbol}: {e}")
             return True
 
     async def test_spread_loop(self):
+
+        logging.info("🔍 [SCANNER] A carregar mercados da Hyperliquid e Lighter...")
         await self.hl_exchange.load_markets()
         await self.lighter_exchange.load_markets()
 
-        print("🔍 [SCANNER] A ligar aos Websockets da Hyperliquid e Lighter...")
+        logging.info("🔍 [SCANNER] A ligar aos Websockets da Hyperliquid e Lighter...")
 
         # Forçar a primeira carga de saldos antes de entrar no loop
         await self._update_balances(force=True)
@@ -589,7 +587,7 @@ class CexBot:
 
                     # O \n no início garante que se houver um print com \r ativo (Radar),
                     # o sinal de vida salta para uma linha nova e limpa sem estragar o layout.
-                    print(
+                    logging.info(
                         f"\n💚 [SINAL DE VIDA] {formated_time} | {len(market)} pares monitorizados | "
                         f"Saldos -> HL: {self.hl_balance:.2f} USDC | Lighter: {self.lighter_balance:.2f} USDC"
                     )
@@ -598,7 +596,7 @@ class CexBot:
                 await asyncio.sleep(0.001)
 
             except Exception as e:
-                print(f"\n⚠️ Erro na captura dos dados: {e}")
+                logging.error(f"\n⚠️ Erro na captura dos dados: {e}")
                 await asyncio.sleep(2)
 
 
