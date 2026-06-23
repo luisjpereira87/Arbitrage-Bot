@@ -13,7 +13,6 @@ class MeteoraClient:
             full_command = ["node", self.script_path] + args
             # Capturamos tudo para garantir que não perdemos nada
             result = subprocess.run(full_command, capture_output=True, text=True)
-
             # Combinamos stdout e stderr apenas para garantir
             output_completo = result.stdout + result.stderr
 
@@ -39,7 +38,6 @@ class MeteoraClient:
     # Mapeamento dos métodos
     def get_status(self) -> MarketStatus:
         data = self._execute(["status"])
-
         status = MarketStatus(
             sol_balance=float(data["balances"]["SOL"]),
             usdc_balance=float(data["balances"]["USDC"]),
@@ -57,7 +55,6 @@ class MeteoraClient:
         data = self._execute(["check"])
         if not data.get("exists"):
             return None
-
         status_data = {
             "exists": data.get("exists"),
             "address": data.get("address"),
@@ -72,6 +69,7 @@ class MeteoraClient:
 
     def open_position(self, usdc: float, price: float, width: float):
         data = self._execute(["open", str(usdc), str(price), str(width)])
+        print("AQUIIIIII", data)
         return data.get("status") == "SUCCESS"
 
     def rebalance_position(self, pos_address: str, usdc: float, price: float, width: float):

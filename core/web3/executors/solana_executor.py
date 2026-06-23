@@ -46,7 +46,7 @@ class SolanaExecutor(ExecutorBase, ABC):
             if token_info.chain == 'solana':
                 self.tokens.append(token_info)
 
-        asyncio.run(self.__mapear_e_preparar_tokens())
+        # asyncio.run(self.__mapear_e_preparar_tokens())
 
     @property
     def w3(self):
@@ -104,6 +104,7 @@ class SolanaExecutor(ExecutorBase, ABC):
             logging.error(f"❌ Erro ao ler saldo na Solana: {e}")
             return 0
 
+    """
     async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
                                amount_usd: float, chain: Chains, quote_data: dict | None):
 
@@ -360,6 +361,88 @@ class SolanaExecutor(ExecutorBase, ABC):
 
                 print(f"❌ [CRÍTICO] Erro de lógica não contornável: {e}")
                 return None
+    """
+
+    async def send_transaction(self, pools_list: list[str], dir_list: list[bool], tokens_list: list[str],
+                               amount_usd: float, chain: Chains, quote_data: dict | None, use_jito: bool = False):
+
+        # 1. TRATAMENTO DO VALOR E SALDO (Tua lógica intacta)
+        val_in_raw = int(amount_usd)
+        t_address = tokens_list[0]
+        w_address = str(self.wallet.pubkey())
+
+        try:
+            contract_balance = await self.get_token_balance(t_address, chain)
+        except Exception as e:
+            print(f"❌ [PROD] Falha ao ler saldo no nó: {e}")
+            return None
+
+        if contract_balance < val_in_raw:
+            diff = val_in_raw - contract_balance
+            if diff < 100000:
+                val_in_raw = contract_balance
+            else:
+                print(f"❌ [PROD] Saldo insuficiente abortado: {contract_balance} < {val_in_raw}")
+                return None
+
+        # 2. CONFIGURAÇÃO DO PAYLOAD (Diferenciada pelo parâmetro)
+        payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": w_address,
+            "wrapAndUnwrapSol": True,
+            "dynamicComputeUnitLimit": True,
+            "feeAccount": w_address,
+            "prioritizationFeeLamports": 0 if use_jito else "auto",
+            "skipUserAccountsRpcCalls": use_jito,
+            "asLegacyTransaction": not use_jito
+        }
+
+        jupiter_endpoints = ["https://public.jupiterapi.com/swap", "https://api.jup.ag/swap/v6/swap"]
+        max_jupiter_retries = 3
+
+        for attempt in range(max_jupiter_retries):
+            try:
+                if not quote_data: return None
+
+                # Constrói o swap
+                swap_url = jupiter_endpoints[attempt % len(jupiter_endpoints)]
+                async with self._get_session().post(swap_url, json=payload, timeout=2.0) as resp:
+                    if resp.status != 200:
+                        if resp.status in [429, 500, 503]: raise Exception(f"HTTP_{resp.status}")
+                        return None
+                    tx_base64 = (await resp.json())['swapTransaction']
+
+                # Assinatura (Igual nos dois)
+                raw_tx = base64.b64decode(tx_base64)
+                v_tx = VersionedTransaction(VersionedTransaction.from_bytes(raw_tx).message, [self.wallet])
+
+                # 3. ENVIO CONDICIONAL (Aqui decidimos como enviar sem duplicar o resto)
+                if use_jito:
+                    bundle_id = await self.jito_executor.send_jito_bundle(v_tx, v_tx.message.recent_blockhash,
+                                                                          tip_lamports=250000)
+                    if not bundle_id: return None
+                    tx_hash = str(v_tx.signatures[0])
+                else:
+                    opts = TxOpts(skip_preflight=False, preflight_commitment=Commitment("processed"))
+                    res = await self.solana_manager.solana.send_raw_transaction(bytes(v_tx), opts=opts)
+                    tx_hash = str(res.value)
+
+                # 4. POLLING DE CONFIRMAÇÃO (Unificado)
+                for _ in range(30):
+                    await asyncio.sleep(0.5)
+                    status_resp = await self.solana_manager.solana.get_signature_statuses(
+                        [tx_hash if not use_jito else v_tx.signatures[0]])
+                    if status_resp.value and status_resp.value[0]:
+                        if status_resp.value[0].err: return None
+                        if status_resp.value[0].confirmation_status: return tx_hash
+                return None
+
+            except Exception as e:
+                # Mantém exatamente a tua lógica de Network Error e Rotate RPC
+                if any(x in str(e).lower() for x in ["timeout", "429", "500", "503"]):
+                    if attempt < max_jupiter_retries - 1: continue
+                    self.solana_manager.rotate_rpc()
+                return None
 
     async def is_swap_viable(self, token_in: str, token_out: str, amount_in_usd: float, expected_out_units: float,
                              fee: int, tolerance: float, chain: Chains, quote_data: dict | None, is_exit: bool) -> \
@@ -412,127 +495,80 @@ class SolanaExecutor(ExecutorBase, ABC):
             logging.error(f"❌ Erro na validação Solana: {e}")
             return False, 0
 
-    async def cleanup_wallet__(self, reserve_sol_usdc=10.0):
-        print(f"🧹 Iniciando limpeza geral de tokens para USDC. Reserva de SOL: ${reserve_sol_usdc}...")
+    async def cleanup_wallet(self, reserve_sol_usdc=10.0):
+        """
+        Limpeza de carteira: converte excedentes de SOL e outros tokens para USDC.
+        Usa conversões atómicas seguras para evitar erros de decimais.
+        """
+        print(f"🧹 Iniciando limpeza geral. Reserva de SOL: ${reserve_sol_usdc}...")
 
-        # 1. Obter o preço do SOL para saber quanto é 10 USD em SOL
-        solana_token = self.config.tokens_by_address.get(self.solana_address.lower())
+        # 1. Obter informações de referência
+        sol_token = self.config.tokens_by_address.get(self.solana_address.lower())
         usdc_token = self.config.tokens_by_address.get(self.usdc_address.lower())
 
-        print("AQUIII", solana_token, usdc_token)
-        sol_price_quote = await self.jupiter_client.get_quote(solana_token.address, usdc_token.address, 1.0,
-                                                              solana_token.decimals, usdc_token.decimals)
-
-        # print("AQUIII", sol_price_quote)
+        # Preço do SOL para calcular a reserva em lamports
+        sol_price_quote = await self.jupiter_client.get_quote(sol_token.address, usdc_token.address, 1.0, 9, 6)
         if not sol_price_quote:
-            logging.error("❌ Não foi possível obter preço do SOL para calcular reserva.")
+            print("❌ Não foi possível obter preço do SOL para calcular reserva.")
             return False
 
-            # Extrair preço líquido
-        sol_price = 1.0 / sol_price_quote.price_dex_net
-        sol_to_reserve = int((reserve_sol_usdc / sol_price) * 1_000_000_000)
-
-        print(f"📊 Preço SOL atual: ${sol_price:.2f} | Reserva: {sol_to_reserve / 1_000_000_000:.4f} SOL")
-
-        successes = []
-
-        for token in self.tokens:
-            if token.address.lower() == self.usdc_address.lower():
-                continue
-
-            try:
-                balance = await self.get_token_balance(token.address, Chains.SOLANA)
-
-                # Cálculo de montante para swap
-                if token.address.lower() == solana_token.address.lower():
-                    amount_to_swap = balance - sol_to_reserve
-                    if amount_to_swap <= 0:  # Não faz swap se não tivermos saldo acima da reserva
-                        continue
-                else:
-                    amount_to_swap = balance
-                    if amount_to_swap <= 0:  # Pula se saldo for zero
-                        continue
-
-                # Validação: Convertendo RAW para HUMANO para o get_quote
-                human_amount = amount_to_swap / (10 ** token.decimals)
-
-                print("human_amount", human_amount, balance)
-                # Threshold de 1 USDC (aproximado)
-                print(f"🔄 Cotando {token.symbol}...")
-
-                quote = await self.jupiter_client.get_quote(
-                    token.address, usdc_token.address, human_amount,
-                    token.decimals, usdc_token.decimals
-                )
-
-                if quote and quote.price_dex_net:
-                    out_amount_usdc = int(quote.data_quote['outAmount']) / 1_000_000
-                    if out_amount_usdc >= 0.50:
-                        tx_hash = await self.send_transaction_(
-                            pools_list=[], dir_list=[], tokens_list=[token.address],
-                            amount_usd=amount_to_swap, chain=Chains.SOLANA, quote_data=quote.data_quote
-                        )
-                        if tx_hash:
-                            print(f"✅ Swap de {token.symbol} realizado!")
-                            successes.append(True)
-                            await asyncio.sleep(1)  # Respiro entre swaps
-
-            except Exception as e:
-                print(f"❌ Erro ao limpar {token.symbol}: {e}")
-
-        return len(successes) > 0
-
-    async def cleanup_wallet(self, reserve_sol_usdc=10.0):
-        print(f"🧹 Iniciando limpeza geral de tokens para USDC. Reserva de SOL: ${reserve_sol_usdc}...")
-
-        # 1. Obter preço atual do SOL
-        solana_token = self.config.tokens_by_address.get(self.solana_address.lower())
-        usdc_token = self.config.tokens_by_address.get(self.usdc_address.lower())
-
-        sol_price_quote = await self.jupiter_client.get_quote(solana_token.address, usdc_token.address, 1.0, 9, 6)
-        if not sol_price_quote: return False
-
         sol_price = sol_price_quote.price_dex_net
-        sol_to_reserve_lamports = int((reserve_sol_usdc / sol_price) * 1_000_000_000)
+        sol_to_reserve_lamports = int((reserve_sol_usdc / sol_price) * (10 ** sol_token.decimals))
 
         successes = []
 
         for token in self.tokens:
-            # A. SALTA USDC (Capital)
+            # A. Salta USDC (é o nosso ativo de destino/reserva)
             if token.address.lower() == self.usdc_address.lower():
                 continue
 
-            # B. LÓGICA DIFERENCIADA PARA SOL (Combustível)
-            if token.address.lower() == solana_token.address.lower():
-                balance = await self.get_token_balance(token.address, Chains.SOLANA)
+            # Obter saldo atual (em unidades atómicas)
+            balance = await self.get_token_balance(token.address, Chains.SOLANA)
 
-                # Margem de segurança: só vendemos se tivermos MUITO acima da reserva
-                # Exemplo: só vendemos se tivermos 2x a reserva (ex: 20$)
+            # B. Lógica de cálculo de montante a vender
+            if token.address.lower() == sol_token.address.lower():
+                # Só vendemos se exceder a margem de segurança (2x reserva)
                 target_buffer = sol_to_reserve_lamports * 2
-
                 if balance > target_buffer:
-                    amount_to_swap = balance - sol_to_reserve_lamports  # Vende apenas o excedente
-                    print(f"💰 Excesso de SOL detectado. Vendendo excedente para USDC...")
+                    amount_to_swap = balance - sol_to_reserve_lamports
                 else:
-                    continue  # Mantém o SOL pois estamos na zona de reserva ou abaixo dela
-
-            # C. LÓGICA PARA OUTROS TOKENS (Shitcoins/Taxas)
+                    continue
             else:
-                balance = await self.get_token_balance(token.address, Chains.SOLANA)
+                # Para outros tokens, tentamos limpar tudo
                 amount_to_swap = balance
                 if amount_to_swap <= 0: continue
 
-            # Execução do Swap (comum a todos)
+            # C. Execução e Validação do Swap (Unificado)
             human_amount = amount_to_swap / (10 ** token.decimals)
-            quote = await self.jupiter_client.get_quote(token.address, usdc_token.address, human_amount, token.decimals,
-                                                        usdc_token.decimals)
 
-            if quote and int(quote.data_quote['outAmount']) / 1_000_000 >= 0.50:
-                tx_hash = await self.send_transaction_(
-                    pools_list=[], dir_list=[], tokens_list=[token.address],
-                    amount_usd=amount_to_swap, chain=Chains.SOLANA, quote_data=quote.data_quote
-                )
-                if tx_hash: successes.append(True)
+            # Obter quote via Jupiter
+            quote = await self.jupiter_client.get_quote(
+                token.address, usdc_token.address, human_amount,
+                token.decimals, usdc_token.decimals
+            )
+
+            if quote:
+                # Validação: só trocamos se o valor de saída for >= 0.50 USDC
+                out_amount_human = int(quote.data_quote['outAmount']) / (10 ** usdc_token.decimals)
+
+                if out_amount_human >= 0.50:
+                    print(f"💰 A processar swap de {token.address}: {human_amount:.4f} unidades...")
+
+                    tx_hash = await self.send_transaction(
+                        pools_list=[],
+                        dir_list=[],
+                        tokens_list=[token.address],
+                        amount_usd=amount_to_swap,  # Valor atómico
+                        chain=Chains.SOLANA,
+                        quote_data=quote.data_quote
+                    )
+
+                    if tx_hash:
+                        successes.append(True)
+                        print(f"✅ Swap de {token.address} concluído com sucesso.")
+                else:
+                    print(
+                        f"⚠️ Valor de swap muito baixo ({out_amount_human:.2f} USDC) para o token {token.address}. Ignorado.")
 
         return len(successes) > 0
 

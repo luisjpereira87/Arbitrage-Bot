@@ -19,7 +19,7 @@ if (fs.existsSync(envPath)) {
 
 const dlmmModule = require('@meteora-ag/dlmm');
 const DLMMClass = dlmmModule.default || dlmmModule.DLMM || dlmmModule;
-const { getPriceOfBinByBinId } = dlmmModule;
+const { getPriceOfBinByBinId, StrategyType } = dlmmModule;
 
 // =====================================================================
 // 2. INFRASTRUCTURE & CONFIGURATION
@@ -129,7 +129,6 @@ async function ensureGasTracker(currentPrice) {
             console.error(`✅ [Gas Tracker] Colchão de Gas OK. Mantendo ${requiredSolForGas.toFixed(4)} SOL intactos para taxas.`);
         }
 
-        const solBalanceLamports = await connection.getBalance(wallet.publicKey);
         if (solBalanceLamports < 5000000) { // Menos de 0.005 SOL
             throw new Error("Saldo de Gas insuficiente após tentativa de reabastecimento.");
         }
@@ -212,7 +211,7 @@ async function openBalancedPosition(totalUsdcCapital, currentPrice, rangeWidthDo
         console.error(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
         // 1. Gas e Saldos
-        await ensureGasTracker(currentPrice);
+        //await ensureGasTracker(currentPrice);
         const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
         const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
 
@@ -257,7 +256,8 @@ async function openBalancedPosition(totalUsdcCapital, currentPrice, rangeWidthDo
             strategy: {
                 minBinId: metrics.activeBinId - metrics.binsOffset,
                 maxBinId: metrics.activeBinId + metrics.binsOffset,
-                strategyType: 0, // 0 = Spot
+                //strategyType: 0, // 0 = Spot
+                strategyType: StrategyType.Curve
             },
         });
 
@@ -444,7 +444,7 @@ async function rebalancePositionByStrategy(positionPublicKey, totalUsdcCapital, 
         console.error("✅ Posição fechada.");
 
         // 1. Gas e Saldos
-        await ensureGasTracker(currentPrice);
+        //await ensureGasTracker(currentPrice);
         const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
         const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
 
@@ -469,17 +469,18 @@ async function rebalancePositionByStrategy(positionPublicKey, totalUsdcCapital, 
           strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: 0,
+            //strategyType: 0,
+            strategyType: StrategyType.Curve
           },
         });
 
 
         if (Array.isArray(tx)) {
             for (const t of tx) {
-                await provider.sendAndConfirm(t, [positionKeypair]);
+                await provider.sendAndConfirm(t, [p]);
             }
         } else {
-            await provider.sendAndConfirm(tx, [positionKeypair]);
+            await provider.sendAndConfirm(tx, [p]);
         }
 
         endScript("SUCCESS");

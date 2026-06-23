@@ -4,6 +4,7 @@ import logging
 import ccxt.pro as ccxtpro
 
 from core.bots.exchanges.exchange_client import ExchangeClient
+from core.bots.exchanges.indicators_utils import IndicatorsUtils
 from core.config.properties_multi import PropertiesMulti
 from core.dclass.open_position_dclass import OpenPosition
 from core.dclass.signal_enum import Signal
@@ -30,6 +31,10 @@ class HlClient:
         asyncio.create_task(self.update_price_loop())
 
     async def open_position(self, capital_amount: float) -> bool:
+        position = await self.get_position()
+        if position:
+            logging.warning("⚠️ Posição já existente")
+            return True
         opened_order = await self.hl_exchange.open_new_position(self.symbol, 1.0, Signal.SELL, capital_amount,
                                                                 self.cached_price)
         if opened_order:
@@ -67,14 +72,15 @@ class HlClient:
         """
 
         if self.cached_price <= 0:
-            print("⏳ Aguardando feed de preço da Hyperliquid...")
+            logging.info("⏳ Aguardando feed de preço da Hyperliquid...")
+            await asyncio.sleep(0.5)
             return False
 
         try:
             # prices = await self.hl_exchange.watch_prices(self.symbol)
             current_price = self.cached_price
 
-            print(f"DEBUG: Preço: {current_price} | Range: [{min_price:.2f} - {max_price:.2f}]")
+            # print(f"DEBUG: Preço: {current_price} | Range: [{min_price:.2f} - {max_price:.2f}]")
 
             interval_size = max_price - min_price
 
@@ -84,17 +90,24 @@ class HlClient:
 
             trigger_lower = min_price + margin_abs
             trigger_upper = max_price - margin_abs
-            print(f"DEBUG: Preço: {current_price} | Range: [{trigger_lower:.2f} - {trigger_upper:.2f}]")
+            # print(f"DEBUG: Preço: {current_price} | Range: [{trigger_lower:.2f} - {trigger_upper:.2f}]")
 
             if trigger_lower >= trigger_upper:
-                print("⚠️ Aviso: Margem de segurança maior que o próprio range!")
+                logging.info("⚠️ Aviso: Margem de segurança maior que o próprio range!")
                 return True  # Rebalanceia imediatamente
 
             if self.cached_price < trigger_lower or self.cached_price > trigger_upper:
-                print(f"🚨 Preço entrou na ZONA DE PERIGO (Margem de {margin_percent * 100}%)!")
+                logging.info(f"🚨 Preço entrou na ZONA DE PERIGO (Margem de {margin_percent * 100}%)!")
                 return True
             return False
 
         except Exception as e:
             logging.error(f"❌ Erro ao validar a posição: {e}")
             return False
+
+    async def get_balance(self) -> float:
+        return await self.hl_exchange.get_available_balance()
+
+    async def calculate_dynamic_range_width(self):
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=30)
+        return IndicatorsUtils.calculate_channel_width(ohlcv, lookback=14)

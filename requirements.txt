@@ -7,3 +7,6 @@ solana
 solders
 httpx
 base58
+pandas_ta
+pandas
+ta

@@ -231,42 +231,6 @@ class CexBot:
         lighter_task = self.lighter_exchange.watch_prices(pair)
         return await asyncio.gather(hl_task, lighter_task)
 
-    async def get_all_open_positions(self) -> Dict[str, dict]:
-        """Recolhe o estado das posições via Websocket em bloco (Estilo o teu de Preços)."""
-
-        # Só nos interessam os pares que estamos ativamente a vigiar
-        pares_validos = [pair for pair in self.watchlist if pair not in self.blacklist]
-
-        # Dispara a recolha para a Hyperliquid e Lighter de cada par
-        tasks = [self.fetch_exchange_positions(pair) for pair in pares_validos]
-
-        if not tasks:
-            return {}
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        positions_data = {}
-        for pair, result in zip(pares_validos, results):
-            if isinstance(result, Exception):
-                logging.error(f"⚠️ Erro ao obter posições para {pair}: {result}")
-                continue
-
-            if not result:
-                continue
-
-            hl_pos, lighter_pos = result
-            # Se alguma das DEXs tiver uma posição ativa, guardamos no dicionário de bloqueio
-            if hl_pos or lighter_pos:
-                positions_data[pair] = {"hl": hl_pos, "lighter": lighter_pos}
-
-        return positions_data
-
-    async def fetch_exchange_positions(self, pair: str) -> tuple:
-        """Método auxiliar idêntico ao teu de preços."""
-        hl_task = self.hl_exchange.watch_open_position(pair)  # O teu método com return
-        lighter_task = self.lighter_exchange.watch_open_position(pair)  # O teu método com return
-        return await asyncio.gather(hl_task, lighter_task)
-
     def print_log(self, par: str, op: CexOpportunity):
         """Centraliza a forma como mostras os lucros no terminal."""
         print(f"\n🚨 [OPORTUNIDADE EM {par}!]")
@@ -297,7 +261,7 @@ class CexBot:
             hl_signal, lighter_signal = Signal.SELL, Signal.BUY
             hl_price, lighter_price = cex_opportunity.sell_price, cex_opportunity.buy_price
         else:
-            return
+            return False
 
         # 1. Prepare tasks to run in parallel
         hl_task = self.hl_exchange.open_new_position(symbol, leverage, hl_signal, capital_to_trade, hl_price)
@@ -360,7 +324,7 @@ class CexBot:
                 print(f"🛡️ [ROLLBACK CONCLUÍDO] Posição na Hyperliquid fechada com sucesso. Risco mitigado.")
             except Exception as e:
                 print(f"☠️ [ALERTA MÁXIMO] Falha catastrófica! Não consegui reverter a ordem na Hyperliquid: {e}")
-
+            return False
         # 🚨 CASO CRÍTICO 2: Lighter executou, mas HL FALHOU
         if lighter_success and not hl_success:
             print(f"🚨 [FALHA PARCIAL] Ordem executada na Lighter, mas FALHOU na Hyperliquid! Erro: {res_hl}")
@@ -373,6 +337,7 @@ class CexBot:
                 print(f"🛡️ [ROLLBACK CONCLUÍDO] Posição na Lighter fechada com sucesso. Risco mitigado.")
             except Exception as e:
                 print(f"☠️ [ALERTA MÁXIMO] Falha catastrófica! Não consegui reverter a ordem na Lighter: {e}")
+            return False
 
     async def execute_parallel_close(self, pos: CexActivePosition) -> bool:
         """Executa o fecho simultâneo e em paralelo de ambas as pernas da arbitragem."""
@@ -598,6 +563,27 @@ class CexBot:
             except Exception as e:
                 logging.error(f"\n⚠️ Erro na captura dos dados: {e}")
                 await asyncio.sleep(2)
+
+    async def run_live_test(self):
+
+        print("🚀 Iniciando teste real de venda...")
+
+        try:
+            # 3. Executa a ordem de venda pequena
+            # Ajusta o symbol e amount para algo seguro
+            order = await self.lighter_exchange.open_new_position(
+                "BTC/USDC:USDC",
+                1.0,
+                Signal.SELL,
+                20.0  # Preço muito alto para a ordem não ser executada imediatamente
+            )
+            print(f"✅ Ordem enviada com sucesso! ID: {order.id}")
+
+        except Exception as e:
+            print(f"❌ Ocorreu um erro no teste real:")
+            # Imprime o erro completo para sabermos se é o tal ponteiro ou a chave
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
