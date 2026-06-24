@@ -254,6 +254,84 @@ class CexBot:
             logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")
             return False
 
+        # Configuração de sinais
+        if cex_opportunity.type == CexType.HL_TO_LIGHTER:
+            hl_signal, lighter_signal = Signal.BUY, Signal.SELL
+            hl_price, lighter_price = cex_opportunity.buy_price, cex_opportunity.sell_price
+        elif cex_opportunity.type == CexType.LIGHTER_TO_HL:
+            hl_signal, lighter_signal = Signal.SELL, Signal.BUY
+            hl_price, lighter_price = cex_opportunity.sell_price, cex_opportunity.buy_price
+        else:
+            return False
+
+        print(f"🚀 [EXECUTOR] Iniciando execução sequencial para {symbol} | Qtd: {qty}...")
+
+        # 1. Executa PRIMEIRO a perna mais instável (Lighter)
+        res_lighter = await self.lighter_exchange.open_new_position(symbol, leverage, lighter_signal, capital_to_trade,
+                                                                    lighter_price)
+        lighter_success = res_lighter is not None
+
+        if not lighter_success:
+            print(f"❌ [FALHA PRIORITÁRIA] Lighter rejeitou a ordem. Nenhum risco gerado.")
+            return False
+
+        # 2. Executa a perna da Hyperliquid (apenas se a Lighter tiver sucesso)
+        res_hl = await self.hl_exchange.open_new_position(symbol, leverage, hl_signal, capital_to_trade, hl_price)
+        hl_success = res_hl is not None
+
+        # Caso A: Tudo perfeito
+        if hl_success:
+            print(f"✅ [ARBITRAGEM SUCESSO] Posições abertas com sucesso!")
+
+            entry_price_hl = entry_price_lighter = 0.0
+            if cex_opportunity.type == CexType.HL_TO_LIGHTER:
+                entry_price_hl = cex_opportunity.buy_price
+                entry_price_lighter = cex_opportunity.sell_price
+            elif cex_opportunity.type == CexType.LIGHTER_TO_HL:
+                entry_price_hl = cex_opportunity.sell_price
+                entry_price_lighter = cex_opportunity.buy_price
+
+            CexTradePosition.save_position(CexActivePosition(
+                status='OPEN',
+                symbol=symbol,
+                type=cex_opportunity.type,
+                qty_pair=qty,
+                initial_balance_lighter_usd=cex_opportunity.lighter_balance,
+                initial_balance_hl_usd=cex_opportunity.hl_balance,
+                capital_to_trade_usd=cex_opportunity.capital_to_trade,
+                entry_price_hl=entry_price_hl,
+                entry_price_lighter=entry_price_lighter,
+                timestamp=datetime.now().isoformat()
+            ))
+            self.active_positions = CexTradePosition.load_all_positions()
+            return True
+
+        # Caso C: Lighter executou, mas HL FALHOU (Rollback necessário)
+        if lighter_success and not hl_success:
+            print(f"🚨 [FALHA PARCIAL] Ordem executada na Lighter, mas FALHOU na Hyperliquid! Erro: {res_hl}")
+            print(f"⚡ [CONTINGÊNCIA] A acionar rollback na Lighter...")
+
+            inverse_lighter_signal = Signal.SELL if lighter_signal == Signal.BUY else Signal.BUY
+            try:
+                await self.lighter_exchange.close_position(symbol, qty, inverse_lighter_signal)
+                print(f"🛡️ [ROLLBACK CONCLUÍDO] Risco mitigado.")
+            except Exception as e:
+                print(f"☠️ [ALERTA MÁXIMO] Falha catastrófica no rollback: {e}")
+            return False
+
+        return False
+
+    """
+    async def open_trade(self, cex_opportunity: CexOpportunity):
+        symbol = cex_opportunity.symbol
+        capital_to_trade = cex_opportunity.capital_to_trade
+        qty = cex_opportunity.qtd_pair
+        leverage = 1.0
+
+        if not await self.lighter_exchange.validate_lighter_client():
+            logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")
+            return False
+
         if cex_opportunity.type == CexType.HL_TO_LIGHTER:
             hl_signal, lighter_signal = Signal.BUY, Signal.SELL
             hl_price, lighter_price = cex_opportunity.buy_price, cex_opportunity.sell_price
@@ -338,6 +416,7 @@ class CexBot:
             except Exception as e:
                 print(f"☠️ [ALERTA MÁXIMO] Falha catastrófica! Não consegui reverter a ordem na Lighter: {e}")
             return False
+    """
 
     async def execute_parallel_close(self, pos: CexActivePosition) -> bool:
         """Executa o fecho simultâneo e em paralelo de ambas as pernas da arbitragem."""

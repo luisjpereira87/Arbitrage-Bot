@@ -20,7 +20,7 @@ class ExchangeClient(ExchangeBase, ABC):
         self.wallet_address = wallet_address
 
         self._lighter_nonce = None
-        self._nonce_lock = asyncio.Lock()
+        # self._nonce_lock = asyncio.Lock()
         self._order_lock = asyncio.Lock()
 
         self.realtime_exposure = {}
@@ -91,19 +91,18 @@ class ExchangeClient(ExchangeBase, ABC):
             raise
 
     async def cancel_all_orders(self, symbol: str = ''):
-        async with self._order_lock:
-            try:
-                params = {'user': self.wallet_address}
-                if symbol:
-                    open_orders = await self.exchange.fetch_open_orders(symbol, params=params)
-                else:
-                    open_orders = await self.exchange.fetch_open_orders(params=params)
+        try:
+            params = {'user': self.wallet_address}
+            if symbol:
+                open_orders = await self.exchange.fetch_open_orders(symbol, params=params)
+            else:
+                open_orders = await self.exchange.fetch_open_orders(params=params)
 
-                for order in open_orders:
-                    await self.exchange.cancel_order(order['id'], order['symbol'])  # type: ignore
-                logging.info(f"🔁 Todas as ordens foram canceladas para {symbol if symbol else 'todos símbolos'}.")
-            except Exception as e:
-                logging.error(f"Erro ao cancelar ordens: {e}")
+            for order in open_orders:
+                await self.exchange.cancel_order(order['id'], order['symbol'])  # type: ignore
+            logging.info(f"🔁 Todas as ordens foram canceladas para {symbol if symbol else 'todos símbolos'}.")
+        except Exception as e:
+            logging.error(f"Erro ao cancelar ordens: {e}")
 
     async def get_ohlcv(self, symbol: str, timeframe: str = '15m', limit: int = 14) -> pd.DataFrame:
         try:
@@ -257,65 +256,64 @@ class ExchangeClient(ExchangeBase, ABC):
 
     async def place_entry_order(self, symbol: str, leverage: float, entry_amount: float, price_ref: float,
                                 side: Signal) -> OpenedOrder:
-        async with self._order_lock:
+        logging.info(
+            f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}")
+        try:
+
+            params: dict[str, Any] = {}
+
+            await self.exchange.set_margin_mode("isolated", symbol, {'leverage': leverage})
+
             logging.info(
                 f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}")
-            try:
 
-                params: dict[str, Any] = {}
+            logging.info(f"Enviando ordem market ({side})")
 
-                await self.exchange.set_margin_mode("isolated", symbol, {'leverage': leverage})
+            entry_amount = float(self.exchange.amount_to_precision(symbol, entry_amount))
+            precise_price = float(self.exchange.price_to_precision(symbol, price_ref))
 
-                logging.info(
-                    f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}")
+            logging.info(
+                f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}, params=")
 
-                logging.info(f"Enviando ordem market ({side})")
+            logging.info(f"Enviando ordem market ({side}) com params: ")
 
-                entry_amount = float(self.exchange.amount_to_precision(symbol, entry_amount))
-                precise_price = float(self.exchange.price_to_precision(symbol, price_ref))
+            params['slippage'] = 0.01
+            if "lighter" in str(self.exchange.id).lower():
+                params['integrator_account_index'] = 0
+                params['integrator_taker_fee'] = 0  # ✨ A chave que faltava aqui!
+                params['integrator_maker_fee'] = 0  # Prevenção: Próxima provável chave
+                params[
+                    'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
 
-                logging.info(
-                    f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}, params=")
+            slippage_factor = 0.015
 
-                logging.info(f"Enviando ordem market ({side}) com params: ")
+            if side == Signal.BUY:
+                execution_price = price_ref * (1 + slippage_factor)
+            else:
+                execution_price = price_ref * (1 - slippage_factor)
 
-                params['slippage'] = 0.01
-                if "lighter" in str(self.exchange.id).lower():
-                    params['integrator_account_index'] = 0
-                    params['integrator_taker_fee'] = 0  # ✨ A chave que faltava aqui!
-                    params['integrator_maker_fee'] = 0  # Prevenção: Próxima provável chave
-                    params[
-                        'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
+            execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
+            order = await self.exchange.create_order(
+                symbol=symbol,
+                type='limit',
+                side=side.value,  # type: ignore
+                amount=entry_amount,
+                price=execution_price,
+                params=params
+            )
+            raw_price = order.get('price')  # type: ignore
+            final_price = float(raw_price) if (
+                    raw_price is not None and str(raw_price).strip() != '') else price_ref
+            logging.info(
+                f"✅ Ordem criada: id={order.get('id')}, side={order.get('side')}, amount={order.get('amount')}, price={order.get('price')}")  # type: ignore
 
-                slippage_factor = 0.015
+            return OpenedOrder(str(order.get('id') or ""), None, None, None, symbol, None,
+                               str(order.get('side') or ""),
+                               final_price, order.get('amount'), False, None)  # type: ignore
 
-                if side == Signal.BUY:
-                    execution_price = price_ref * (1 + slippage_factor)
-                else:
-                    execution_price = price_ref * (1 - slippage_factor)
-
-                execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
-                order = await self.exchange.create_order(
-                    symbol=symbol,
-                    type='limit',
-                    side=side.value,  # type: ignore
-                    amount=entry_amount,
-                    price=execution_price,
-                    params=params
-                )
-                raw_price = order.get('price')  # type: ignore
-                final_price = float(raw_price) if (
-                        raw_price is not None and str(raw_price).strip() != '') else price_ref
-                logging.info(
-                    f"✅ Ordem criada: id={order.get('id')}, side={order.get('side')}, amount={order.get('amount')}, price={order.get('price')}")  # type: ignore
-
-                return OpenedOrder(str(order.get('id') or ""), None, None, None, symbol, None,
-                                   str(order.get('side') or ""),
-                                   final_price, order.get('amount'), False, None)  # type: ignore
-
-            except Exception as e:
-                logging.error(f"Erro ao criar ordem de entrada: {e}")
-                raise
+        except Exception as e:
+            logging.error(f"Erro ao criar ordem de entrada: {e}")
+            raise
 
     async def open_new_position(self, symbol: str, leverage: float, signal: Signal, capital_amount: float,
                                 price_ref: (float | None) = None) -> (
@@ -349,60 +347,60 @@ class ExchangeClient(ExchangeBase, ABC):
         """
         Fecha posição com ordem de mercado. Usa 'side' atual para calcular o lado oposto (close_side).
         """
-        async with self._order_lock:
-            logging.info(f"[DEBUG] Tentando fechar posição: symbol={symbol}, side={side.value}, amount={amount}")
 
-            try:
-                orderbook = await self.exchange.fetch_order_book(symbol)
+        logging.info(f"[DEBUG] Tentando fechar posição: symbol={symbol}, side={side.value}, amount={amount}")
 
-                if side == Signal.BUY:
-                    price = orderbook['asks'][0][0] if orderbook['asks'] else None
-                else:
-                    price = orderbook['bids'][0][0] if orderbook['bids'] else None
+        try:
+            orderbook = await self.exchange.fetch_order_book(symbol)
 
-                logging.info(f"[DEBUG] Preço usado para ordem market: {price}")
+            if side == Signal.BUY:
+                price = orderbook['asks'][0][0] if orderbook['asks'] else None
+            else:
+                price = orderbook['bids'][0][0] if orderbook['bids'] else None
 
-                if price is None:
-                    raise Exception("⚠️ Livro de ofertas vazio para fechamento.")
+            logging.info(f"[DEBUG] Preço usado para ordem market: {price}")
 
-                params: dict[str, Any] = {}
-                params['reduceOnly'] = True
-                if "lighter" in str(self.exchange.id).lower():
-                    params['integrator_account_index'] = 0
-                    params['integrator_taker_fee'] = 0  # ✨ A chave que faltava aqui!
-                    params['integrator_maker_fee'] = 0  # Prevenção: Próxima provável chave
-                    params[
-                        'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
+            if price is None:
+                raise Exception("⚠️ Livro de ofertas vazio para fechamento.")
 
-                slippage_factor = 0.015
+            params: dict[str, Any] = {}
+            params['reduceOnly'] = True
+            if "lighter" in str(self.exchange.id).lower():
+                params['integrator_account_index'] = 0
+                params['integrator_taker_fee'] = 0  # ✨ A chave que faltava aqui!
+                params['integrator_maker_fee'] = 0  # Prevenção: Próxima provável chave
+                params[
+                    'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
 
-                # 3. Inverter o lado para o fecho e calcular o preço de proteção
-                if side == Signal.BUY:
-                    # A posição original era COMPRA -> Temos de VENDER para fechar.
-                    # Aceitamos vender até 1.5% ABAIXO do Bid atual para limpar o livro.
-                    execution_price = price * (1 - slippage_factor)
-                else:
-                    # A posição original era VENDA -> Temos de COMPRAR para fechar.
-                    # Aceitamos comprar até 1.5% ACIMA do Ask atual para limpar o livro.
-                    execution_price = price * (1 + slippage_factor)
+            slippage_factor = 0.015
 
-                execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
-                amount = float(self.exchange.amount_to_precision(symbol, amount))
+            # 3. Inverter o lado para o fecho e calcular o preço de proteção
+            if side == Signal.BUY:
+                # A posição original era COMPRA -> Temos de VENDER para fechar.
+                # Aceitamos vender até 1.5% ABAIXO do Bid atual para limpar o livro.
+                execution_price = price * (1 - slippage_factor)
+            else:
+                # A posição original era VENDA -> Temos de COMPRAR para fechar.
+                # Aceitamos comprar até 1.5% ACIMA do Ask atual para limpar o livro.
+                execution_price = price * (1 + slippage_factor)
 
-                # Não enviar preço em ordens market (exchange pode rejeitar)
-                order = await self.exchange.create_order(
-                    symbol,
-                    'market',
-                    side.value,  # type: ignore
-                    amount,
-                    price,
-                    params=params
-                )
-                logging.info(f"✅ Ordem de fechamento enviada: {order.get('info')}")  # type: ignore
-                return order
-            except Exception as e:
-                logging.error(f"❌ Erro ao fechar posição: {e}")
-                raise
+            execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
+            amount = float(self.exchange.amount_to_precision(symbol, amount))
+
+            # Não enviar preço em ordens market (exchange pode rejeitar)
+            order = await self.exchange.create_order(
+                symbol,
+                'market',
+                side.value,  # type: ignore
+                amount,
+                price,
+                params=params
+            )
+            logging.info(f"✅ Ordem de fechamento enviada: {order.get('info')}")  # type: ignore
+            return order
+        except Exception as e:
+            logging.error(f"❌ Erro ao fechar posição: {e}")
+            raise
 
     async def _custom_fetch_nonce_lighter(self, *args, **kwargs) -> (int | None):
         """
