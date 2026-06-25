@@ -58,7 +58,7 @@ class CexBot:
             "privateKey": self.properties.PRIVATE_KEY_WALLET_HL,
             "enableRateLimit": True,
             "timeout": 10000,
-            "testnet": True,
+            "testnet": False,
             "options": {"defaultSlippage": 0.01,
                         "libraryPath": self.library_path,
                         "integrator_account_index": 0,  # ✨ A CHAVE EM FALTA AQUI!
