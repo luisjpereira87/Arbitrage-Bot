@@ -19,7 +19,7 @@ from core.utils.cex_trade_position import CexTradePosition
 
 class CexBot:
     def __init__(self):
-        properties = PropertiesMulti()
+        self.properties = PropertiesMulti()
 
         # Descobrir a pasta do script (/core/bots)
         bots_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,23 +28,23 @@ class CexBot:
         project_root = os.path.abspath(os.path.join(bots_dir, "../../"))
 
         # Monta o caminho apontando para a raiz do projeto
-        library_path = os.path.join(project_root, properties.LIGHTER_SIGNER_FILE)
+        self.library_path = os.path.join(project_root, self.properties.LIGHTER_SIGNER_FILE)
 
         print("\n--- 🔍 NOVO DIAGNÓSTICO DE CAMINHO ---")
         print(f"📂 Raiz do Projeto: {project_root}")
-        print(f"🎯 A procurar em: {library_path}")
+        print(f"🎯 A procurar em: {self.library_path}")
 
-        if not os.path.exists(library_path):
+        if not os.path.exists(self.library_path):
             print(f"🚨 [ERRO] Ainda não encontrei o ficheiro na raiz do projeto!")
             # Se falhar na raiz, mantemos a procura na pasta local para não quebrar o CCXT caso o movas para lá
-            library_path = os.path.join(bots_dir, properties.LIGHTER_SIGNER_FILE)
+            library_path = os.path.join(bots_dir, self.properties.LIGHTER_SIGNER_FILE)
         else:
             print("✅ Ficheiro detetado na raiz do projeto!")
         print("---------------------------------\n")
 
         hl = ccxtpro.hyperliquid({
-            "walletAddress": properties.WALLET_ADDRESS_HL,
-            "privateKey": properties.PRIVATE_KEY_WALLET_HL,
+            "walletAddress": self.properties.WALLET_ADDRESS_HL,
+            "privateKey": self.properties.PRIVATE_KEY_WALLET_HL,
             "enableRateLimit": True,
             "timeout": 10000,
             "testnet": False,
@@ -52,13 +52,13 @@ class CexBot:
         })
 
         lighter = ccxtpro.lighter({
-            "walletAddress": properties.WALLET_ADDRESS_HL,
-            "privateKey": properties.PRIVATE_KEY_WALLET_HL,
+            "walletAddress": self.properties.WALLET_ADDRESS_HL,
+            "privateKey": self.properties.PRIVATE_KEY_WALLET_HL,
             "enableRateLimit": True,
             "timeout": 10000,
             "testnet": False,
             "options": {"defaultSlippage": 0.01,
-                        "libraryPath": library_path,
+                        "libraryPath": self.library_path,
                         "integrator_account_index": 0,  # ✨ A CHAVE EM FALTA AQUI!
                         "adjustForTimeDifference": True,
                         'accountIndex': 729593,  # 🟢 O teu ID real de Mainnet!
@@ -84,8 +84,8 @@ class CexBot:
 
         self.blacklist = set()
 
-        self.hl_exchange = ExchangeClient(hl, properties.WALLET_ADDRESS_HL)
-        self.lighter_exchange = ExchangeClient(lighter, properties.WALLET_ADDRESS_HL)
+        self.hl_exchange = ExchangeClient(hl, self.properties.WALLET_ADDRESS_HL)
+        self.lighter_exchange = ExchangeClient(lighter, self.properties.WALLET_ADDRESS_HL)
 
         self.active_positions = CexTradePosition.load_all_positions()
 
@@ -96,6 +96,24 @@ class CexBot:
         self.BALANCE_UPDATE_INTERVAL = 10.0  # Segundos
 
         self.min_capital = 11.0
+
+    def _lighter_instance(self):
+        lighter = ccxtpro.lighter({
+            "walletAddress": self.properties.WALLET_ADDRESS_HL,
+            "privateKey": self.properties.PRIVATE_KEY_WALLET_HL,
+            "enableRateLimit": True,
+            "timeout": 10000,
+            "testnet": False,
+            "options": {"defaultSlippage": 0.01,
+                        "libraryPath": self.library_path,
+                        "integrator_account_index": 0,  # ✨ A CHAVE EM FALTA AQUI!
+                        "adjustForTimeDifference": True,
+                        'accountIndex': 729593,  # 🟢 O teu ID real de Mainnet!
+                        'apiKeyIndex': 254,  # 🟢 O teu ID real de Mainnet!
+                        },
+        })
+
+        return ExchangeClient(lighter, self.properties.WALLET_ADDRESS_HL)
 
     def calculate_spread(
             self,
@@ -249,6 +267,8 @@ class CexBot:
         capital_to_trade = cex_opportunity.capital_to_trade
         qty = cex_opportunity.qtd_pair
         leverage = 1.0
+
+        self.lighter_exchange = self._lighter_instance()
 
         if not await self.lighter_exchange.validate_lighter_client():
             logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")
