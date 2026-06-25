@@ -93,7 +93,7 @@ class CexBot:
         self.hl_balance = 0.0
         self.lighter_balance = 0.0
         self.last_balance_update = 0.0
-        self.BALANCE_UPDATE_INTERVAL = 10.0  # Segundos
+        self.BALANCE_UPDATE_INTERVAL = 120.0  # Segundos
 
         self.min_capital = 11.0
 
