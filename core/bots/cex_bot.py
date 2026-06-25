@@ -63,7 +63,7 @@ class CexBot:
                         "libraryPath": self.library_path,
                         "integrator_account_index": 0,  # ✨ A CHAVE EM FALTA AQUI!
                         "adjustForTimeDifference": True,
-                        'accountIndex': 141,  # 🟢 O teu ID real de Mainnet!
+                        'accountIndex': 729593,  # 🟢 O teu ID real de Mainnet!
                         'apiKeyIndex': 254,  # 🟢 O teu ID real de Mainnet!
                         },
         })
