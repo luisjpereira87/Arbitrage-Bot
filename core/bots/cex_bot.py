@@ -50,18 +50,20 @@ class CexBot:
             "testnet": False,
             "options": {"defaultSlippage": 0.01},
         })
+        # testnet accountIndex 141 apiKeyIndex 254
+        # mainnet accountIndex 729593 apiKeyIndex 254
 
         lighter = ccxtpro.lighter({
             "walletAddress": self.properties.WALLET_ADDRESS_HL,
             "privateKey": self.properties.PRIVATE_KEY_WALLET_HL,
             "enableRateLimit": True,
             "timeout": 10000,
-            "testnet": False,
+            "testnet": True,
             "options": {"defaultSlippage": 0.01,
                         "libraryPath": self.library_path,
                         "integrator_account_index": 0,  # ✨ A CHAVE EM FALTA AQUI!
                         "adjustForTimeDifference": True,
-                        'accountIndex': 729593,  # 🟢 O teu ID real de Mainnet!
+                        'accountIndex': 141,  # 🟢 O teu ID real de Mainnet!
                         'apiKeyIndex': 254,  # 🟢 O teu ID real de Mainnet!
                         },
         })
@@ -96,24 +98,6 @@ class CexBot:
         self.BALANCE_UPDATE_INTERVAL = 120.0  # Segundos
 
         self.min_capital = 11.0
-
-    def _lighter_instance(self):
-        lighter = ccxtpro.lighter({
-            "walletAddress": self.properties.WALLET_ADDRESS_HL,
-            "privateKey": self.properties.PRIVATE_KEY_WALLET_HL,
-            "enableRateLimit": True,
-            "timeout": 10000,
-            "testnet": False,
-            "options": {"defaultSlippage": 0.01,
-                        "libraryPath": self.library_path,
-                        "integrator_account_index": 0,  # ✨ A CHAVE EM FALTA AQUI!
-                        "adjustForTimeDifference": True,
-                        'accountIndex': 729593,  # 🟢 O teu ID real de Mainnet!
-                        'apiKeyIndex': 254,  # 🟢 O teu ID real de Mainnet!
-                        },
-        })
-
-        return ExchangeClient(lighter, self.properties.WALLET_ADDRESS_HL)
 
     def calculate_spread(
             self,
@@ -267,8 +251,6 @@ class CexBot:
         capital_to_trade = cex_opportunity.capital_to_trade
         qty = cex_opportunity.qtd_pair
         leverage = 1.0
-
-        self.lighter_exchange = self._lighter_instance()
 
         if not await self.lighter_exchange.validate_lighter_client():
             logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")

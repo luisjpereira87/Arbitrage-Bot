@@ -1,10 +1,12 @@
 import asyncio
+import builtins
 import logging
 from abc import ABC
 from typing import Any
 
 import ccxt.async_support as ccxt
 import pandas as pd
+from ccxt.base.types import OrderType, OrderSide, Num
 
 from core.bots.exchanges.exchange_base import ExchangeBase
 from core.dclass.open_position_dclass import OpenPosition
@@ -14,7 +16,7 @@ from core.dclass.signal_enum import Signal
 
 
 class ExchangeClient(ExchangeBase, ABC):
-    def __init__(self, exchange: ccxt.Exchange, wallet_address):
+    def __init__(self, exchange: ccxt.lighter | ccxt.hyperliquid, wallet_address):
         super().__init__()
         self.exchange = exchange
         self.wallet_address = wallet_address
@@ -41,6 +43,7 @@ class ExchangeClient(ExchangeBase, ABC):
             # 🎯 A MÁGICA: Substituímos o método do CCXT permanentemente aqui no init!
             # A partir deste momento, sempre que o CCXT precisar de um nonce, ele chama a nossa função robusta
             self.exchange.fetch_nonce = self._custom_fetch_nonce_lighter
+            self.exchange.create_order = self.create_order_patched
 
     def get_name(self):
         return "hyperliquid"
@@ -293,10 +296,11 @@ class ExchangeClient(ExchangeBase, ABC):
                 execution_price = price_ref * (1 - slippage_factor)
 
             execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
+
             order = await self.exchange.create_order(
                 symbol=symbol,
                 type='limit',
-                side=side.value,  # type: ignore
+                side='buy' if str(side.value).lower() == 'buy' else 'sell',
                 amount=entry_amount,
                 price=execution_price,
                 params=params
@@ -391,7 +395,7 @@ class ExchangeClient(ExchangeBase, ABC):
             order = await self.exchange.create_order(
                 symbol,
                 'market',
-                side.value,  # type: ignore
+                'buy' if str(side.value).lower() == 'buy' else 'sell',  # type: ignore
                 amount,
                 price,
                 params=params
@@ -490,3 +494,70 @@ class ExchangeClient(ExchangeBase, ABC):
         except Exception as e:
             logging.error(f"❌ Erro na validação: {e}")
             return False
+
+    async def create_order_patched(self, symbol: str, type: OrderType, side: OrderSide, amount: float,
+                                   price: Num = None, params={}):
+        # 1. Debug de entrada
+        logging.info(f"🔍 [PATCH] Iniciando create_order para {symbol} | Lado: {side} | Qtd: {amount}")
+
+        await self.exchange.load_markets()
+        accountIndex, params = await self.exchange.handle_account_index(params, 'createOrder', 'accountIndex',
+                                                                        'account_index')
+        params['accountIndex'] = accountIndex
+
+        market = self.exchange.market(symbol)
+        orderRequests = self.exchange.create_order_request(symbol, type, side, amount, price, params)
+
+        order = orderRequests[0]
+        apiKeyIndex = order['api_key_index']
+
+        # 2. Diagnóstico de Identidade
+        logging.info(f"🆔 [PATCH] Identidade: AccountIndex={accountIndex} | ApiKeyIndex={apiKeyIndex}")
+
+        strAccountIndex = self.exchange.number_to_string(accountIndex)
+        strApiKeyIndex = self.exchange.number_to_string(apiKeyIndex)
+
+        # 3. Log de carga do signer
+        logging.info("🔑 [PATCH] A carregar signer...")
+        signer = await self.exchange.load_account(
+            self.exchange.options['chainId'],
+            self.exchange.get_lighter_private_key(strAccountIndex, strApiKeyIndex),
+            strApiKeyIndex,
+            strAccountIndex,
+            params
+        )
+
+        # Check de integridade do signer
+        if signer is None:
+            logging.error("❌ [PATCH] CRÍTICO: Signer retornado como None!")
+        else:
+            logging.info(f"✅ [PATCH] Signer carregado com sucesso (Objeto: {builtins.type(signer)})")
+
+        # 4. Preparação da assinatura
+        if self.exchange.safe_integer(order, 'nonce') is None:
+            order['nonce'] = await self.exchange.fetch_nonce(accountIndex, apiKeyIndex)
+            logging.info(f"🔢 [PATCH] Nonce obtido: {order['nonce']}")
+
+        try:
+            logging.info("✍️ [PATCH] Chamando lighter_sign_create_order...")
+            txType, txInfo = self.exchange.lighter_sign_create_order(signer, order)
+            logging.info("✨ [PATCH] Assinatura realizada com sucesso!")
+        except Exception as e:
+            # Aqui capturamos o erro de memória antes de ele matar o bot
+            logging.error(f"💥 [PATCH] ERRO NA ASSINATURA: {str(e)}")
+            logging.error(f"📍 [PATCH] Estado no momento do erro: Acc={accountIndex}, ApiKey={apiKeyIndex}")
+            # Se for erro de cliente, aqui podes disparar o cleanup:
+            # self.exchange.signer = None
+            raise e
+
+        request = {'tx_type': txType, 'tx_info': txInfo}
+        response = await self.exchange.publicPostSendTx(request)
+        logging.info(f"📥 [PATCH] Resposta da API recebida: {response}")
+
+        combined_data = self.exchange.deep_extend(response, order)
+        logging.info(f"🧬 [PATCH] Dados combinados para parse: {combined_data}")
+
+        parsed_order = self.exchange.parse_order(combined_data, market)
+        logging.info(f"📦 [PATCH] Resultado do parse: {parsed_order}")
+
+        return parsed_order
