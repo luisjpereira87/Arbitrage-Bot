@@ -539,6 +539,18 @@ class ExchangeClient(ExchangeBase, ABC):
             logging.info(f"🔢 [PATCH] Nonce obtido: {order['nonce']}")
 
         try:
+            # --- A CORREÇÃO CRÍTICA AQUI ---
+            # Forçamos a re-validação do contexto C antes da assinatura
+            logging.info(f"🔄 [PATCH] Re-verificando contexto C para Acc={accountIndex}...")
+            await self.exchange.load_account(
+                self.exchange.options['chainId'],
+                self.exchange.get_lighter_private_key(strAccountIndex, strApiKeyIndex),
+                strApiKeyIndex,
+                strAccountIndex,
+                params
+            )
+            # -------------------------------
+
             logging.info("✍️ [PATCH] Chamando lighter_sign_create_order...")
             txType, txInfo = self.exchange.lighter_sign_create_order(signer, order)
             logging.info("✨ [PATCH] Assinatura realizada com sucesso!")
