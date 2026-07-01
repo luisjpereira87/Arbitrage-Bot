@@ -48,6 +48,7 @@ class MeteoraClient:
     # Mapeamento dos métodos
     async def get_status(self) -> MarketStatus:
         data = await self._execute_async(["status", self.pool_config.address])
+        print(f"DEBUG: JSON recebido do Node.js: {data}")
         status = MarketStatus(
             sol_balance=float(data["balances"]["SOL"]),
             usdc_balance=float(data["balances"]["USDC"]),
