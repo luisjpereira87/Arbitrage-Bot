@@ -12,6 +12,9 @@ class PositionStatus:
     upperBin: Optional[int] = None
     lowerPrice: Optional[float] = None
     upperPrice: Optional[float] = None
+    size: Optional[int] = None
+    totalXAmount: Optional[float] = None
+    totalYAmount: Optional[float] = None
 
 
 @dataclass

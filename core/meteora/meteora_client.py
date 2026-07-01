@@ -1,25 +1,35 @@
+import asyncio
 import json
-import subprocess
 
 from core.meteora.dclass import MarketStatus, PositionStatus, CalculateRange
+from core.meteora.pool_manager_dclass import PoolConfig
 
 
 class MeteoraClient:
-    def __init__(self, script_path):
+    def __init__(self, script_path, pool_config: PoolConfig):
         self.script_path = script_path
+        self.pool_config = pool_config
 
-    def _execute(self, args):
+    async def _execute_async(self, args):
         try:
             full_command = ["node", self.script_path] + args
-            # Capturamos tudo para garantir que não perdemos nada
-            result = subprocess.run(full_command, capture_output=True, text=True)
-            # Combinamos stdout e stderr apenas para garantir
-            output_completo = result.stdout + result.stderr
+            process = await asyncio.create_subprocess_exec(
+                *full_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
 
-            return self.extract_json_response(output_completo)
+            # Lê o output e espera o processo acabar, mas de forma mais direta
+            stdout, stderr = await process.communicate()
+
+            print(stdout.decode())
+            print(stderr.decode())
+            # Se o Node.js estiver a enviar logs inúteis, isso pode estar a atrasar.
+            # Garante que só tens o JSON na saída.
+            return self.extract_json_response(stdout.decode())
 
         except Exception as e:
-            return {"status": "ERROR", "message": f"Erro crítico de execução: {str(e)}"}
+            return {"status": "ERROR", "message": str(e)}
 
     def extract_json_response(self, raw_output):
         if not raw_output:
@@ -36,8 +46,8 @@ class MeteoraClient:
         return {"status": "ERROR", "message": "Nenhum JSON encontrado nas linhas recebidas"}
 
     # Mapeamento dos métodos
-    def get_status(self) -> MarketStatus:
-        data = self._execute(["status"])
+    async def get_status(self) -> MarketStatus:
+        data = await self._execute_async(["status", self.pool_config.address])
         status = MarketStatus(
             sol_balance=float(data["balances"]["SOL"]),
             usdc_balance=float(data["balances"]["USDC"]),
@@ -51,8 +61,8 @@ class MeteoraClient:
 
         return status
 
-    def check_position(self) -> (PositionStatus | None):
-        data = self._execute(["check"])
+    async def get_position(self) -> (PositionStatus | None):
+        data = await self._execute_async(["get_position", self.pool_config.address])
         if not data.get("exists"):
             return None
         status_data = {
@@ -63,25 +73,28 @@ class MeteoraClient:
             "lowerBin": int(data.get("lowerBin", 0)),
             "upperBin": int(data.get("upperBin", 0)),
             "lowerPrice": float(data.get("lowerPrice", 0.0)),
-            "upperPrice": float(data.get("upperPrice", 0.0))
+            "upperPrice": float(data.get("upperPrice", 0.0)),
+            "size": float(data.get("size", 0.0)),
+            "totalXAmount": float(data.get("totalXAmount", 0.0)),
+            "totalYAmount": float(data.get("totalYAmount", 0.0)),
         }
         return PositionStatus(**status_data)
 
-    def open_position(self, usdc: float, price: float, width: float):
-        data = self._execute(["open", str(usdc), str(price), str(width)])
-        print("AQUIIIIII", data)
-        return data.get("status") == "SUCCESS"
+    async def open_position(self, usdc: float, price: float, width: float):
+        data = await self._execute_async(["open", self.pool_config.address, str(usdc), str(price), str(width)])
+        print(f"Position object {data}")
+        return data.get("status") == "SUCCESS_OPEN_BALANCE_POSITION"
 
-    def rebalance_position(self, pos_address: str, usdc: float, price: float, width: float):
-        data = self._execute(["rebalance", pos_address, str(usdc), str(price), str(width)])
-        return data.get("status") == "SUCCESS"
+    async def rebalance_position(self, usdc: float, price: float, width: float):
+        data = await self._execute_async(["rebalance", self.pool_config.address, str(usdc), str(price), str(width)])
+        return data.get("status") == "SUCCESS_REBALANCE_POSITION"
 
-    def close_all(self):
-        data = self._execute(["close"])
-        return data.get("status") == "SUCCESS"
+    async def close_all(self):
+        data = await self._execute_async(["close", self.pool_config.address])
+        return data.get("status") == "SUCCESS_CLOSE_ALL"
 
-    def calculate_range(self, current_price: float, range_width_dollars: float) -> CalculateRange:
-        data = self._execute(["calculate", str(current_price), str(range_width_dollars)])
+    async def calculate_range(self, current_price: float, range_width_dollars: float) -> CalculateRange:
+        data = await self._execute_async(["calculate", str(current_price), str(range_width_dollars)])
 
         result = CalculateRange(
             status=data["status"],

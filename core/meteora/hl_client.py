@@ -18,13 +18,14 @@ class HlClient:
             "privateKey": properties.PRIVATE_KEY_WALLET_HL,
             "enableRateLimit": True,
             "timeout": 10000,
-            "testnet": True,
+            "testnet": False,
             "options": {"defaultSlippage": 0.01},
         })
 
         self.hl_exchange = ExchangeClient(hl, properties.WALLET_ADDRESS_HL)
         self.symbol = "SOL/USDC:USDC"
         self.cached_price = 0.0
+        self.out_of_range_since = None
 
     async def start(self):
         """Chama isto no início do teu bot principal."""
@@ -33,8 +34,9 @@ class HlClient:
     async def open_position(self, capital_amount: float) -> bool:
         position = await self.get_position()
         if position:
-            logging.warning("⚠️ Posição já existente")
-            return True
+            logging.warning("⚠️ Posição já existente, a fechar posição...")
+            await self.close_position()
+
         opened_order = await self.hl_exchange.open_new_position(self.symbol, 1.0, Signal.SELL, capital_amount,
                                                                 self.cached_price)
         if opened_order:
@@ -78,7 +80,7 @@ class HlClient:
 
         try:
             # prices = await self.hl_exchange.watch_prices(self.symbol)
-            current_price = self.cached_price
+            # current_price = self.cached_price
 
             # print(f"DEBUG: Preço: {current_price} | Range: [{min_price:.2f} - {max_price:.2f}]")
 
@@ -97,7 +99,7 @@ class HlClient:
                 return True  # Rebalanceia imediatamente
 
             if self.cached_price < trigger_lower or self.cached_price > trigger_upper:
-                logging.info(f"🚨 Preço entrou na ZONA DE PERIGO (Margem de {margin_percent * 100}%)!")
+                # logging.info(f"🚨 Preço entrou na ZONA DE PERIGO (Margem de {margin_percent * 100}%)!")
                 return True
             return False
 
@@ -108,6 +110,6 @@ class HlClient:
     async def get_balance(self) -> float:
         return await self.hl_exchange.get_available_balance()
 
-    async def calculate_dynamic_range_width(self):
-        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=30)
-        return IndicatorsUtils.calculate_channel_width(ohlcv, lookback=14)
+    async def calculate_dynamic_range_width(self, limit=30, lookback=14):
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=limit)
+        return IndicatorsUtils.calculate_channel_width(ohlcv, lookback=lookback)

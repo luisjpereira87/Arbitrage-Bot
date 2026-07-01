@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from core.bots.cex_bot import CexBot
 from core.config.properties_dex import PropertiesDex
 from core.config.properties_multi import PropertiesMulti
+from core.meteora.main_bot import DeltaNeutralSniperBot
 
 """
 def load_abi():
@@ -29,6 +30,17 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("solana").setLevel(logging.WARNING)
 
+
+async def run():
+    cex_bot = CexBot()
+    # asyncio.run(cex_bot.test_spread_loop())
+    delta_bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24)
+    await asyncio.gather(
+        cex_bot.test_spread_loop(),
+        delta_bot.start_sniper_cycle()
+    )
+
+
 if __name__ == '__main__':
     properties_multi = PropertiesMulti()
     properties_dex = PropertiesDex()
@@ -37,8 +49,10 @@ if __name__ == '__main__':
     # --- EXECUÇÃO -
     # solana_bot = SolanaBot()
     # asyncio.run(solana_bot.scan_jupiter_triangles())
-    cex_bot = CexBot()
-    asyncio.run(cex_bot.test_spread_loop())
+    # cex_bot = CexBot()
+    # asyncio.run(cex_bot.test_spread_loop())
+
+    asyncio.run(run())
     # TradePosition.empty_position()
     # multi_chain_bot = MultiChainBot(properties_multi)
     # asyncio.run(multi_chain_bot.run())
