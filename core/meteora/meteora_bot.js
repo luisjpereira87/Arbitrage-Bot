@@ -228,7 +228,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
             //strategyType: 0, // 0 = Spot
-            strategyType: StrategyType.Curve
+            strategyType: StrategyType.Spot
         },
     });
 
