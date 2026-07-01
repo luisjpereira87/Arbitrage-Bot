@@ -6,7 +6,7 @@ from typing import Optional
 
 import aiohttp
 from solana.rpc.commitment import Commitment
-from solana.rpc.types import TxOpts, TokenAccountOpts
+from solana.rpc.models import TokenAccountOpts, TxOpts
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
