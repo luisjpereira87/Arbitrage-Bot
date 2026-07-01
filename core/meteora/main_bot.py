@@ -123,6 +123,7 @@ class DeltaNeutralSniperBot:
             return False
 
     async def get_balance(self, position: PositionStatus):
+
         market_status = await self.meteora_client.get_status()
         sol_price = market_status.raw_price
         usdc_balance_wallet = market_status.usdc_balance
@@ -130,8 +131,11 @@ class DeltaNeutralSniperBot:
 
         usdc_balance_total_wallet = (sol_price * sol_balance_wallet) + usdc_balance_wallet
 
-        sol_balance_strategy = position.totalXAmount / (10 ** self.pool_config.tokenX.decimals)
-        usdc_balance_strategy = position.totalYAmount / (10 ** self.pool_config.tokenY.decimals)
+        sol_balance_strategy = 0
+        usdc_balance_strategy = 0
+        if position is not None:
+            sol_balance_strategy = position.totalXAmount / (10 ** self.pool_config.tokenX.decimals)
+            usdc_balance_strategy = position.totalYAmount / (10 ** self.pool_config.tokenY.decimals)
 
         usdc_balance_total_strategy = (sol_price * sol_balance_strategy) + usdc_balance_strategy
 
@@ -347,7 +351,7 @@ class DeltaNeutralSniperBot:
         last_heartbeat = time.time()
 
         position_data = await self.meteora_client.get_position()
-        balance = await self.get_balance(position_data)
+        # balance = await self.get_balance(position_data)
         while True:
             try:
 
