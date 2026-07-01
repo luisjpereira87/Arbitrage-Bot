@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from core.config.properties_multi import PropertiesMulti
-from core.meteora.dclass import PositionStatus
+from core.meteora.dclass import PositionStatus, RangeStatus
 from core.meteora.hl_client import HlClient
 from core.meteora.meteora_client import MeteoraClient
 from core.meteora.pool_manager_dclass import PoolManager
@@ -204,9 +204,9 @@ class DeltaNeutralSniperBot:
         except Exception as e:
             logging.error(f"❌ Erro ao registar saldo financeiro: {e}")
 
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               margin_percent: float = 0.0,
-                                               duration_seconds: int = 300) -> bool:  # 300s = 5min
+    async def is_price_outside_range_sustained__(self, min_price: float, max_price: float,
+                                                 margin_percent: float = 0.0,
+                                                 duration_seconds: int = 300) -> bool:  # 300s = 5min
 
         # 1. Verifica se está fora do range (tua lógica atual)
         is_outside = await self.hl_client.is_price_outside_range(min_price, max_price, margin_percent)
@@ -232,6 +232,46 @@ class DeltaNeutralSniperBot:
         if time.time() - getattr(self, 'last_log_time', 0) > 20:
             logging.info(f"⏳ Aguardando... Fora do range há {elapsed:.0f}s de {duration_seconds}s.")
             self.last_log_time = time.time()
+        return False
+
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
+                                               margin_percent: float = 0.0,
+                                               duration_seconds: int = 300) -> bool:
+
+        status = await self.hl_client.check_range_status(min_price, max_price, margin_percent)
+
+        # 1. AÇÃO IMEDIATA: Spike de alta (Ignora timer)
+        if status == RangeStatus.OUT_UPPER:
+            logging.warning("🚀 SPIKE DE ALTA DETETADO! Fecho imediato.")
+            self.out_of_range_since = None  # Limpa qualquer timer pendente
+            return True
+
+        # 2. SE VOLTOU PARA DENTRO (Reset do timer)
+        if status == RangeStatus.INSIDE:
+            if self.out_of_range_since is not None:
+                logging.info("✅ Preço voltou para o range. Timer de rebalanceamento resetado.")
+                self.out_of_range_since = None
+            return False
+
+        # 3. SE ESTÁ OUT_LOWER (Lógica de espera com feedback)
+        if status == RangeStatus.OUT_LOWER:
+            # Inicia timer se for a primeira vez
+            if self.out_of_range_since is None:
+                self.out_of_range_since = time.time()
+                logging.info(f"⚠️ Preço abaixo do range. Iniciando contagem de {duration_seconds / 60} min...")
+                return False
+
+            # Verifica tempo decorrido
+            elapsed = time.time() - self.out_of_range_since
+            if elapsed >= duration_seconds:
+                logging.info(f"🚨 Preço baixo sustentado por {elapsed / 60:.1f} min. Rebalanceamento autorizado!")
+                return True
+
+            # Log periódico para não inundar a consola (a cada 20 segundos)
+            if time.time() - getattr(self, 'last_log_time', 0) > 20:
+                logging.info(f"⏳ Aguardando... Abaixo do range há {elapsed:.0f}s de {duration_seconds}s.")
+                self.last_log_time = time.time()
+
         return False
 
     async def close_position(self, position: PositionStatus) -> bool:

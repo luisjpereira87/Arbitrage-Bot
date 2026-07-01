@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Optional
 
 
@@ -32,3 +33,9 @@ class CalculateRange:
     total_bins_width: Optional[float] = None
     capital_multiplier: Optional[float] = None
     active_bin_id: Optional[float] = None
+
+
+class RangeStatus(IntEnum):
+    INSIDE = 0
+    OUT_LOWER = 1
+    OUT_UPPER = 2

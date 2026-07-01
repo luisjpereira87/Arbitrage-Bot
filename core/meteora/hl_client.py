@@ -8,6 +8,7 @@ from core.bots.exchanges.indicators_utils import IndicatorsUtils
 from core.config.properties_multi import PropertiesMulti
 from core.dclass.open_position_dclass import OpenPosition
 from core.dclass.signal_enum import Signal
+from core.meteora.dclass import RangeStatus
 
 
 class HlClient:
@@ -99,13 +100,29 @@ class HlClient:
                 return True  # Rebalanceia imediatamente
 
             if self.cached_price < trigger_lower or self.cached_price > trigger_upper:
-                # logging.info(f"🚨 Preço entrou na ZONA DE PERIGO (Margem de {margin_percent * 100}%)!")
                 return True
             return False
 
         except Exception as e:
             logging.error(f"❌ Erro ao validar a posição: {e}")
             return False
+
+    async def check_range_status(self, min_price: float, max_price: float, margin_percent: float = 0.0) -> RangeStatus:
+        if self.cached_price <= 0:
+            return RangeStatus.INSIDE
+
+        interval_size = max_price - min_price
+        margin_abs = interval_size * margin_percent
+
+        trigger_lower = min_price + margin_abs
+        trigger_upper = max_price - margin_abs
+
+        if self.cached_price < trigger_lower:
+            return RangeStatus.OUT_LOWER
+        elif self.cached_price > trigger_upper:
+            return RangeStatus.OUT_UPPER
+
+        return RangeStatus.INSIDE
 
     async def get_balance(self) -> float:
         return await self.hl_exchange.get_available_balance()
