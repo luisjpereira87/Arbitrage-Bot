@@ -106,7 +106,7 @@ async function executeJupiterSwap(inputMint, outputMint, amountInDecimals) {
     }
 }
 
-async function ensureGasTracker(currentPrice) {
+async function ensureGasTracker__(currentPrice) {
     try {
         const solBalanceLamports = await connection.getBalance(wallet.publicKey);
         const solBalance = solBalanceLamports / 1_000_000_000;
@@ -127,6 +127,31 @@ async function ensureGasTracker(currentPrice) {
         return true;
     } catch (error) {
         console.error(`❌ [Gas Tracker] Erro crítico: ${error.message}`);
+        return false;
+    }
+}
+
+async function ensureGasTracker(currentPrice, totalNeededLamports) {
+    try {
+        const balanceLamports = await connection.getBalance(wallet.publicKey);
+
+        // Margem de segurança extra para garantir que não ficamos com zero na carteira
+        const MARGEM_SEGURANCA = 0.02 * 1_000_000_000; // 0.02 SOL extra
+        const totalExigido = totalNeededLamports + MARGEM_SEGURANCA;
+
+        if (balanceLamports < totalExigido) {
+            console.warn(`⚠️ [Gas Tracker] Saldo insuficiente. Faltam ${(totalExigido - balanceLamports) / 1e9} SOL.`);
+
+            // Calcular quanto precisamos comprar (em SOL)
+            const solFaltante = (totalExigido - balanceLamports) / 1_000_000_000;
+            const usdcToSpend = solFaltante * currentPrice * 1.05; // 5% de margem no swap
+
+            await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(usdcToSpend * 1_000_000));
+            await new Promise(r => setTimeout(r, 5000));
+        }
+        return true;
+    } catch (error) {
+        console.error(`❌ [Gas Tracker] Erro: ${error.message}`);
         return false;
     }
 }
@@ -176,13 +201,23 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
 
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
-    // 1. Gas e Saldos
-    const gasOk = await ensureGasTracker(currentPrice);
-    if (!gasOk) {
-        //console.error("🛑 Abortando abertura: falha na gestão de Gas.");
-        //endScript("ERROR", { message: error.message });
-        throw new Error("🛑 Abortando abertura: falha na gestão de Gas.");
-    }
+    // 1. Obter a quote da DLMM
+    const quote = await dlmmPool.quoteCreatePosition({
+        strategy: {
+            minBinId: metrics.activeBinId - metrics.binsOffset,
+            maxBinId: metrics.activeBinId + metrics.binsOffset,
+            strategyType: StrategyType.Spot,
+        },
+    });
+
+    // 2. Somar o custo total (Liquidez em Lamports + Rent total)
+    const totalRent = quote.positionRent.add(quote.binArrayCost).add(quote.bitmapExtensionCost).add(quote.reallocCost);
+    const totalNeeded = totalXAmount.add(totalRent); // totalXAmount é o BN da tua injeção
+
+    // 3. Chamar o tracker com o valor preciso
+    const gasOk = await ensureGasTracker(currentPrice, totalNeeded.toNumber());
+    if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
+
     const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
     const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
 
