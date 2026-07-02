@@ -199,6 +199,8 @@ async function calculateRangeMetrics(currentPrice, rangePercent) {
 // =====================================================================
 async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
 
+    const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
+
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
     // 1. Obter a quote da DLMM
@@ -230,7 +232,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     }
 
     // 3. Preparação
-    const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
+
 
     // --- DIAGNÓSTICO ATIVO ---
     //const proto = Object.getPrototypeOf(dlmmPool);
