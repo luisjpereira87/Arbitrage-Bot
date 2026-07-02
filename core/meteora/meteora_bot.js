@@ -134,18 +134,27 @@ async function ensureGasTracker__(currentPrice) {
 async function ensureGasTracker(currentPrice, totalNeededLamports) {
     try {
         const balanceLamports = await connection.getBalance(wallet.publicKey);
-
-        // Margem de segurança extra para garantir que não ficamos com zero na carteira
-        const MARGEM_SEGURANCA = 0.02 * 1_000_000_000; // 0.02 SOL extra
+        const MARGEM_SEGURANCA = 0.02 * 1_000_000_000;
         const totalExigido = totalNeededLamports + MARGEM_SEGURANCA;
 
         if (balanceLamports < totalExigido) {
             console.warn(`⚠️ [Gas Tracker] Saldo insuficiente. Faltam ${(totalExigido - balanceLamports) / 1e9} SOL.`);
 
-            // Calcular quanto precisamos comprar (em SOL)
+            // 1. Calcular valor necessário em SOL e USDC
             const solFaltante = (totalExigido - balanceLamports) / 1_000_000_000;
-            const usdcToSpend = solFaltante * currentPrice * 1.05; // 5% de margem no swap
+            const usdcToSpend = solFaltante * currentPrice * 1.05; // 5% margem
 
+            // 2. Verificar se tens USDC suficiente
+            const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
+            const usdcBalance = usdcAccounts.value.length > 0 ? usdcAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
+
+            if (usdcToSpend > usdcBalance) {
+                console.error(`🚨 [Gas Tracker] USDC insuficiente! Precisas de ${usdcToSpend.toFixed(4)} USDC, mas tens apenas ${usdcBalance.toFixed(4)}.`);
+                return false;
+            }
+
+            // 3. Executar Swap
+            console.log(`🔄 Comprando ${solFaltante.toFixed(4)} SOL com ${usdcToSpend.toFixed(4)} USDC...`);
             await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(usdcToSpend * 1_000_000));
             await new Promise(r => setTimeout(r, 5000));
         }
@@ -198,12 +207,19 @@ async function calculateRangeMetrics(currentPrice, rangePercent) {
 // 5. CORE EXECUTION FUNCTIONS
 // =====================================================================
 async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
-
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
-
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
-    // 1. Obter a quote da DLMM
+    // 1. Calcular o capital de injeção
+    const alvoMetadeUsdc = totalUsdcCapital / 2;
+    const solFinalAInjetar = alvoMetadeUsdc / currentPrice;
+
+    // DEFINIÇÃO DOS BNs
+    const totalXAmount = new anchor.BN(Math.floor(solFinalAInjetar * 1_000_000_000));
+    const totalYAmount = new anchor.BN(Math.floor(alvoMetadeUsdc * 1_000_000));
+
+    // 2. Obter Metrics e Quote
+    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars);
     const quote = await dlmmPool.quoteCreatePosition({
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
@@ -212,47 +228,37 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         },
     });
 
-    // 2. Somar o custo total (Liquidez em Lamports + Rent total)
-    const totalRent = quote.positionRent.add(quote.binArrayCost).add(quote.bitmapExtensionCost).add(quote.reallocCost);
-    const totalNeeded = totalXAmount.add(totalRent); // totalXAmount é o BN da tua injeção
+    // 3. Conversão segura de SOL (float) para Lamports (BN)
+    // O quote devolve valores em SOL (ex: 0.0574...)
+    const positionRentSOL = quote.positionCost || 0;
+    const binArrayCostSOL = quote.binArrayCost || 0;
+    const reallocCostSOL = quote.positionReallocCost || 0;
+    const bitmapExtensionCostSOL = quote.bitmapExtensionCost || 0;
 
-    // 3. Chamar o tracker com o valor preciso
+    const totalRentSOL = positionRentSOL + binArrayCostSOL + reallocCostSOL + bitmapExtensionCostSOL;
+    const totalRentLamports = new anchor.BN(Math.ceil(totalRentSOL * 1_000_000_000));
+
+    // Adiciona Buffer de 0.01 SOL (10M lamports) para garantir margem contra simulação
+    const BUFFER_EXTRA = new anchor.BN(10_000_000);
+    const totalNeeded = totalXAmount.add(totalRentLamports).add(BUFFER_EXTRA);
+
+    // 4. Gas Tracker (Agora com o valor exato calculado)
     const gasOk = await ensureGasTracker(currentPrice, totalNeeded.toNumber());
     if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
 
+    // 5. Balanceamento (Swap se necessário)
     const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
     const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
 
-    // 2. Balanceamento
-    const alvoMetadeUsdc = totalUsdcCapital / 2;
     if (Math.abs(usdcBalance - alvoMetadeUsdc) > 0.50) {
         const solParaVender = (alvoMetadeUsdc - usdcBalance) / currentPrice;
         await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
         await new Promise(r => setTimeout(r, 3000));
     }
 
-    // 3. Preparação
-
-
-    // --- DIAGNÓSTICO ATIVO ---
-    //const proto = Object.getPrototypeOf(dlmmPool);
-    //const methods = Object.getOwnPropertyNames(proto);
-    //console.log("DEBUG: Métodos disponíveis:", methods);
-    // -------------------------
-
-    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars);
-    const positionKeypair = Keypair.generate();
-    const solFinalAInjetar = alvoMetadeUsdc / currentPrice;
-    const totalXAmount = new anchor.BN(Math.floor(solFinalAInjetar * 1_000_000_000));
-    const totalYAmount = new anchor.BN(Math.floor(alvoMetadeUsdc * 1_000_000));
-
+    // 6. Injeção
     console.log(`⚡ A injetar X:${totalXAmount.toString()} Y:${totalYAmount.toString()}...`);
-
-    // 4. Injeção Dinâmica (Adaptativa)
-    console.log("⚡ A injetar via estratégia de Spot conforme doc...");
-
-    // Usar os BN (BigNumbers) que já calculaste anteriormente
-    // totalXAmount e totalYAmount já estão definidos no teu código
+    const positionKeypair = Keypair.generate();
 
     const tx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
         positionPubKey: positionKeypair.publicKey,
@@ -264,23 +270,18 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            //strategyType: 0, // 0 = Spot
             strategyType: StrategyType.Spot
         },
     });
 
-    // O SDK pode devolver uma transação ou um array (se for necessário criar bin arrays)
     if (Array.isArray(tx)) {
-        for (const t of tx) {
-            await provider.sendAndConfirm(t, [positionKeypair]);
-        }
+        for (const t of tx) await provider.sendAndConfirm(t, [positionKeypair]);
     } else {
         await provider.sendAndConfirm(tx, [positionKeypair]);
     }
 
     console.log(`✅ Posição injetada com sucesso!`);
     return true;
-    //endScript("SUCCESS_OPEN_BALANCE_POSITION");
 }
 
 async function closeAllPoolPositionsAndSettle(poolAddress) {

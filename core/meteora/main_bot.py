@@ -410,10 +410,10 @@ class DeltaNeutralSniperBot:
                                                                  reserve_sol_usdc)
                 last_heartbeat = await self.heartbeat_log(position_data, last_heartbeat, heartbeat_interval)
 
-                await asyncio.sleep(5)
+                await asyncio.sleep(30)
             except Exception as e:
                 logging.error(f"❌ Erro no ciclo do sniper: {e}")
-                await asyncio.sleep(5)  # Cooldown em caso de erro de rede
+                await asyncio.sleep(30)  # Cooldown em caso de erro de rede
 
     async def test(self):
         return await self.hl_client.calculate_dynamic_range_width()
