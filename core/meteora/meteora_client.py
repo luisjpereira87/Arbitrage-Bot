@@ -22,8 +22,8 @@ class MeteoraClient:
             # Lê o output e espera o processo acabar, mas de forma mais direta
             stdout, stderr = await process.communicate()
 
-            print(stdout.decode())
-            print(stderr.decode())
+            # print(stdout.decode())
+            # print(stderr.decode())
             # Se o Node.js estiver a enviar logs inúteis, isso pode estar a atrasar.
             # Garante que só tens o JSON na saída.
             return self.extract_json_response(stdout.decode())
@@ -48,18 +48,19 @@ class MeteoraClient:
     # Mapeamento dos métodos
     async def get_status(self) -> MarketStatus:
         data = await self._execute_async(["status", self.pool_config.address])
-        print(f"DEBUG: JSON recebido do Node.js: {data}")
+        # print(f"DEBUG: JSON recebido do Node.js: {data}")
         status = MarketStatus(
             sol_balance=float(data["balances"]["SOL"]),
             usdc_balance=float(data["balances"]["USDC"]),
             raw_price=float(data["pool"]["rawPrice"]),
             wallet=data["wallet"]
         )
+        """
         print(f"✅ Status carregado com sucesso!")
         print(f"💰 Saldo SOL: {status.sol_balance}")
         print(f"💵 Saldo USDC: {status.usdc_balance}")
         print(f"📊 Preço: {status.raw_price}")
-
+        """
         return status
 
     async def get_position(self) -> (PositionStatus | None):
@@ -83,7 +84,7 @@ class MeteoraClient:
 
     async def open_position(self, usdc: float, price: float, width: float):
         data = await self._execute_async(["open", self.pool_config.address, str(usdc), str(price), str(width)])
-        print(f"Position object {data}")
+        # print(f"Position object {data}")
         return data.get("status") == "SUCCESS_OPEN_BALANCE_POSITION"
 
     async def rebalance_position(self, usdc: float, price: float, width: float):

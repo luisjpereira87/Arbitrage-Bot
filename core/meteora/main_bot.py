@@ -47,7 +47,7 @@ class DeltaNeutralSniperBot:
         # Configuração de alocação de fundos
         self.total_usdc_capital = total_usdc_capital
         self.usdc_min_hl = usdc_min_hl
-        self.usdc_hl_leg = self.total_usdc_capital / 2
+        self.usdc_hl_leg = (self.total_usdc_capital / 2) * 0.995
         # self.range_width = range_width_dollars
         # print("AQUIII", self.total_usdc_capital, self.usdc_min_hl, self.usdc_hl_leg)
         if self.usdc_min_hl < self.usdc_hl_leg:
@@ -357,7 +357,7 @@ class DeltaNeutralSniperBot:
         e False se estiver apto para operar.
         """
         current_time = time.time()
-        MAX_RANGE_PCT = 0.025
+        MAX_RANGE_PCT = 0.02
         CALC_INTERVAL = 100
         COOLDOWN_DURATION = 300
 
@@ -410,7 +410,7 @@ class DeltaNeutralSniperBot:
                                                                  reserve_sol_usdc)
                 last_heartbeat = await self.heartbeat_log(position_data, last_heartbeat, heartbeat_interval)
 
-                await asyncio.sleep(30)
+                await asyncio.sleep(5)
             except Exception as e:
                 logging.error(f"❌ Erro no ciclo do sniper: {e}")
                 await asyncio.sleep(30)  # Cooldown em caso de erro de rede
