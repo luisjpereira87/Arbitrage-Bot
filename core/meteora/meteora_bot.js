@@ -106,31 +106,6 @@ async function executeJupiterSwap(inputMint, outputMint, amountInDecimals) {
     }
 }
 
-async function ensureGasTracker__(currentPrice) {
-    try {
-        const solBalanceLamports = await connection.getBalance(wallet.publicKey);
-        const solBalance = solBalanceLamports / 1_000_000_000;
-
-        // Custo fixo de segurança: 0.2 SOL (cobrirá qualquer setup de DLMM + taxas)
-        const MIN_SAFE_SOL = 0.2;
-
-        if (solBalance < MIN_SAFE_SOL) {
-            console.error(`⚠️ [Gas Tracker] Saldo de SOL ${solBalance.toFixed(4)} < ${MIN_SAFE_SOL}. Reabastecendo...`);
-
-            // Compra SOL equivalente a 0.2 SOL de valor
-            const usdcToSpend = MIN_SAFE_SOL * currentPrice * 1.1; // +10% margem
-            await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(usdcToSpend * 1_000_000));
-
-            // Espera a rede processar
-            await new Promise(r => setTimeout(r, 5000));
-        }
-        return true;
-    } catch (error) {
-        console.error(`❌ [Gas Tracker] Erro crítico: ${error.message}`);
-        return false;
-    }
-}
-
 async function ensureGasTracker(currentPrice, totalNeededLamports) {
     try {
         const balanceLamports = await connection.getBalance(wallet.publicKey);
@@ -265,8 +240,10 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         user: wallet.publicKey,
         baseKeyPair: positionKeypair,
         lbPair: dlmmPool.pubkey,
-        totalXAmount: new anchor.BN(Math.floor(totalXAmount.toNumber() * 0.995)),
-        totalYAmount: new anchor.BN(Math.floor(totalYAmount.toNumber() * 0.995)),
+        //totalXAmount: new anchor.BN(Math.floor(totalXAmount.toNumber() * 0.995)),
+        //totalYAmount: new anchor.BN(Math.floor(totalYAmount.toNumber() * 0.995)),
+        totalXAmount: new anchor.BN(Math.floor(totalXAmount.toNumber())),
+        totalYAmount: new anchor.BN(Math.floor(totalYAmount.toNumber())),
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,

@@ -76,10 +76,24 @@ class DeltaNeutralSniperBot:
         self.last_known_range = 0.0
         self.last_calculation_time = 0
 
+    async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
+
+        capital_para_hedge = self.total_usdc_capital / 2
+        _, usdc_hl_leg = await self.hl_client.adjust_balance(capital_para_hedge, price_token)
+        usdc_meteora = usdc_hl_leg * 2
+
+        return usdc_meteora, usdc_hl_leg
+
     async def open_position(self, current_price: float, range_width: float) -> bool:
         try:
+
+            usdc_meteora, usdc_hl_leg = await self.calculate_open_balance(current_price)
+
+            logging.info(
+                f"🚀 [BALANCEAMENTO] Meteora: {usdc_meteora:.4f} | HL: {usdc_hl_leg:.4f} (Ratio: {usdc_meteora / usdc_hl_leg:.2f}x)")
+
             # 1. Abre na Meteora primeiro (é o core do investimento)
-            is_open = await self.meteora_client.open_position(self.total_usdc_capital, current_price, range_width)
+            is_open = await self.meteora_client.open_position(usdc_meteora, current_price, range_width)
             logging.info(f"Posição aberta na Meteora?: {is_open}")
             if not is_open:
                 return False
@@ -87,7 +101,7 @@ class DeltaNeutralSniperBot:
             # 2. Tenta fazer o hedge na HL
             try:
                 logging.info("A abrir posição na Hyperliquid")
-                await self.hl_client.open_position(self.usdc_hl_leg)
+                await self.hl_client.open_position(usdc_hl_leg)
                 return True
             except Exception as e:
                 logging.error(f"❌ Falha no Hedge HL: {e}. AÇÃO NECESSÁRIA: Fechar posição Meteora!")
@@ -106,7 +120,13 @@ class DeltaNeutralSniperBot:
             # 2. Rebalancear Meteora
             # Importante: verifica se esta função bloqueia até a transação ser confirmada na blockchain
             logging.info("🔄 Atualizando Posição na Meteora...")
-            is_rebalanced = await self.meteora_client.rebalance_position(self.total_usdc_capital,
+
+            usdc_meteora, usdc_hl_leg = await self.calculate_open_balance(current_price)
+
+            logging.info(
+                f"🚀 [BALANCEAMENTO] Meteora: {usdc_meteora:.4f} | HL: {usdc_hl_leg:.4f} (Ratio: {usdc_meteora / usdc_hl_leg:.2f}x)")
+
+            is_rebalanced = await self.meteora_client.rebalance_position(usdc_meteora,
                                                                          current_price,
                                                                          range_width)
             logging.info(f"Posição rebalanceada na Meteora?: {is_rebalanced}")
@@ -115,7 +135,7 @@ class DeltaNeutralSniperBot:
 
             # 3. Reabrir Hedge na HL
             logging.info("🔄 Abrindo novo Hedge na Hyperliquid...")
-            await self.hl_client.open_position(self.usdc_hl_leg)
+            await self.hl_client.open_position(usdc_hl_leg)
             return True
 
         except Exception as e:
@@ -203,36 +223,6 @@ class DeltaNeutralSniperBot:
 
         except Exception as e:
             logging.error(f"❌ Erro ao registar saldo financeiro: {e}")
-
-    async def is_price_outside_range_sustained__(self, min_price: float, max_price: float,
-                                                 margin_percent: float = 0.0,
-                                                 duration_seconds: int = 300) -> bool:  # 300s = 5min
-
-        # 1. Verifica se está fora do range (tua lógica atual)
-        is_outside = await self.hl_client.is_price_outside_range(min_price, max_price, margin_percent)
-
-        if not is_outside:
-            # Preço voltou para dentro: reseta o timer
-            if self.out_of_range_since is not None:
-                logging.info("✅ Preço voltou para o range. Timer de rebalanceamento resetado.")
-                self.out_of_range_since = None
-            return False
-
-        # 2. Se está fora, verifica o timer
-        if self.out_of_range_since is None:
-            self.out_of_range_since = time.time()
-            logging.info(f"⚠️ Preço fora do range. Iniciando contagem de {duration_seconds / 60} min...")
-            return False
-
-        elapsed = time.time() - self.out_of_range_since
-        if elapsed >= duration_seconds:
-            logging.info(f"🚨 Preço fora do range por {elapsed / 60:.1f} min. Rebalanceamento autorizado!")
-            return True
-
-        if time.time() - getattr(self, 'last_log_time', 0) > 20:
-            logging.info(f"⏳ Aguardando... Fora do range há {elapsed:.0f}s de {duration_seconds}s.")
-            self.last_log_time = time.time()
-        return False
 
     async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
                                                margin_percent: float = 0.0,

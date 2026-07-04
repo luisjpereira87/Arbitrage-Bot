@@ -573,3 +573,79 @@ class ExchangeClient(ExchangeBase, ABC):
         logging.info(f"📦 [PATCH] Resultado do parse: {parsed_order}")
 
         return parsed_order
+
+    async def adjust_balance(self, capital_amount: float, dex_price: float, symbol: str) -> float:
+        try:
+            # 1. Garantir que os mercados estão carregados
+
+            # print(self.exchange.markets(symbol))
+            """
+            if symbol not in self.exchange.markets:
+                logging.warning(f"⚠️ Par {symbol} não carregado. A tentar usar valor bruto.")
+                return capital_amount
+            """
+            await self.exchange.load_markets()
+
+            # 2. Calcular quantidade bruta de tokens (Ex: 24.85 / 50.24 = 0.49462)
+            raw_qty = capital_amount / dex_price
+
+            adjusted_qty = raw_qty * dex_price
+            # 3 e 4. Deixar o CCXT tratar o arredondamento de forma nativa e segura
+            # O método 'amount_to_precision' da exchange sabe EXATAMENTE como a HL quer o número.
+            # Forçamos a conversão para float para podermos fazer contas matemáticas a seguir.
+            clean_qty = float(self.exchange.amount_to_precision(symbol, raw_qty))
+
+            # 5. Calcular o custo em USD para comprar essa quantidade com a margem de 0.3%
+            adjust_balance = clean_qty * dex_price * 1.003
+
+            # 6. Validação de teto de gastos: se a margem de 0.3% ultrapassou o teu slot disponível
+            if adjust_balance > capital_amount:
+                logging.warning(f"⚠️ Ajuste excedeu balance original para {symbol}. Recalculando...")
+
+                # Em vez de inventar o 'step' com o factor, usamos a precisão da própria exchange
+                # No CCXT, a variação mínima (tick size do amount) está em market['limits']['amount']['min'] ou market['precision']['amount']
+                # Para evitar bugs, vamos apenas reduzir 1% da quantidade para garantir que cabe no orçamento
+                clean_qty = float(self.exchange.amount_to_precision(symbol, clean_qty * 0.98))
+                adjust_balance = clean_qty * dex_price * 1.003
+
+            # 7. Segurança máxima: Se depois de tudo a quantidade for zero, não podemos operar
+            if clean_qty <= 0:
+                logging.warning(
+                    f"🚫 [PRECISÃO {symbol}] Quantidade calculada é zero. Saldo insuficiente para o preço do token.")
+                return 0.0
+
+            logging.info(
+                f"🎯 [PRECISÃO {symbol}] Qtd: {clean_qty} | "
+                f"USD Original: ${capital_amount:.2f} | USD Ajustado: ${adjust_balance:.4f}"
+            )
+
+            return adjust_balance
+
+        except Exception as e:
+            logging.error(f"💥 Erro no adjust_balance para {symbol}: {e}")
+            return 0.0
+
+    async def get_perfect_quantities(self, capital_usd: float, dex_price: float, symbol: str) -> tuple[
+        float, float]:
+        await self.exchange.load_markets()
+
+        # 1. Quantidade teórica bruta
+        raw_qty = capital_usd / dex_price
+
+        # 2. Arredondar usando a precisão da Exchange (HL)
+        # Por padrão, o CCXT costuma arredondar para baixo (floor) na maioria das exchanges,
+        # mas para sermos ultra-seguros, podemos validar:
+        clean_qty = float(self.exchange.amount_to_precision(symbol, raw_qty))
+
+        # 3. Verificação de segurança: Se, por algum motivo de arredondamento 'para cima',
+        # o custo ultrapassar o capital, subtraímos o 'tick size' mínimo
+        actual_cost_usd = clean_qty * dex_price
+
+        if actual_cost_usd > capital_usd:
+            precision = self.exchange.markets[symbol]['precision']['amount']
+            clean_qty = clean_qty - precision
+            actual_cost_usd = clean_qty * dex_price
+
+        logging.info(f"⚖️ [PRECISÃO] Ajustado para {clean_qty} SOL | Custo Real: ${actual_cost_usd:.4f}")
+
+        return clean_qty, actual_cost_usd
