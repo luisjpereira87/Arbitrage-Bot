@@ -390,6 +390,33 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
     }
 }
 
+async function getPositionPnL(poolAddress) {
+        try {
+            const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
+
+            if (!response.ok) {
+                throw new Error(`Erro ao obter PnL: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+
+            if (!data.positions || !Array.isArray(data.positions)) {
+                return 0;
+            }
+
+            // Filtra apenas posições ativas e soma o PnL em USD
+            const totalPnLUsd = data.positions
+                .filter(pos => !pos.isClosed)
+                .reduce((sum, pos) => sum + parseFloat(pos.pnlUsd || 0), 0);
+
+            return totalPnLUsd;
+
+        } catch (error) {
+            console.error("Erro na consulta de PnL Meteora:", error);
+            return null;
+        }
+    }
+
 async function getPosition(poolAddress) {
     try {
         const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
@@ -424,6 +451,8 @@ async function getPosition(poolAddress) {
         const totalXAmount = p.positionData.totalXAmount;
         const totalYAmount = p.positionData.totalYAmount;
 
+        const pnlUsd = await getPositionPnL(poolAddress)
+
         console.log(JSON.stringify({
             exists: true,
             address: p.publicKey,
@@ -435,7 +464,8 @@ async function getPosition(poolAddress) {
             upperPrice: upperPrice,
             size: result.userPositions.length,
             totalXAmount: totalXAmount,
-            totalYAmount: totalYAmount
+            totalYAmount: totalYAmount,
+            pnlUsd: pnlUsd
         }));
 
     } catch (error) {
@@ -503,6 +533,10 @@ if (command === "open") {
 } else if (command === "get_position") {
     const poolAddress = args[1];
     getPosition(poolAddress);
+} else if (command === "get_pnl") {
+    console.log("AQUI")
+    const poolAddress = args[1];
+    getPositionPnL(poolAddress);
 } else if (command === "calculate") {
     const currentPrice = parseFloat(args[1]);
     const rangeWidthDollars = parseFloat(args[2]);

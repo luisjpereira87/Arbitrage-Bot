@@ -75,6 +75,7 @@ class DeltaNeutralSniperBot:
         self.cooldown_until = 0
         self.last_known_range = 0.0
         self.last_calculation_time = 0
+        self.lookback_range = 5
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
 
@@ -182,7 +183,7 @@ class DeltaNeutralSniperBot:
             sol_balance_strategy = position.totalXAmount / (10 ** self.pool_config.tokenX.decimals)
             usdc_balance_strategy = position.totalYAmount / (10 ** self.pool_config.tokenY.decimals)
 
-            hl_balance = await self.hl_client.get_balance()  # Em USDC
+            hl_pnl, hl_balance = await self.hl_client.get_balance()  # Em USDC
 
             # 2. Obter valor atual do SOL para normalizar o Total
             # sol_price = await self.get_current_sol_price()
@@ -231,8 +232,14 @@ class DeltaNeutralSniperBot:
         status = await self.hl_client.check_range_status(min_price, max_price, margin_percent)
 
         # 1. AÇÃO IMEDIATA: Spike de alta (Ignora timer)
-        if status == RangeStatus.OUT_UPPER:
+        """
+        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
             logging.warning("🚀 SPIKE DE ALTA DETETADO! Fecho imediato.")
+            self.out_of_range_since = None  # Limpa qualquer timer pendente
+            return True
+        """
+        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
+            logging.info(f"⚠️ Preço saiu do range. Lado: {status}")
             self.out_of_range_since = None  # Limpa qualquer timer pendente
             return True
 
@@ -243,6 +250,7 @@ class DeltaNeutralSniperBot:
                 self.out_of_range_since = None
             return False
 
+        """
         # 3. SE ESTÁ OUT_LOWER (Lógica de espera com feedback)
         if status == RangeStatus.OUT_LOWER:
             # Inicia timer se for a primeira vez
@@ -261,7 +269,7 @@ class DeltaNeutralSniperBot:
             if time.time() - getattr(self, 'last_log_time', 0) > 20:
                 logging.info(f"⏳ Aguardando... Abaixo do range há {elapsed:.0f}s de {duration_seconds}s.")
                 self.last_log_time = time.time()
-
+        """
         return False
 
     async def close_position(self, position: PositionStatus) -> bool:
@@ -299,7 +307,7 @@ class DeltaNeutralSniperBot:
 
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
                                                            range_percentage)
             position = await self.meteora_client.get_position()
@@ -316,24 +324,26 @@ class DeltaNeutralSniperBot:
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             is_open = await self.open_position(market_status.raw_price, range_percentage)
             position = await self.meteora_client.get_position()
             if is_open:
                 await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
         return position
 
-    async def heartbeat_log(self, position_data: PositionStatus, last_heartbeat: float, heartbeat_interval: int):
+    async def heartbeat_log(self, last_heartbeat: float, heartbeat_interval: int):
         now = time.time()
         if now - last_heartbeat >= heartbeat_interval:
             formated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            position_data = await self.meteora_client.get_position()
 
             # Log único e informativo
             msg = f"💚 [SINAL DE VIDA] {formated_time}"
             if position_data:
                 wallet_balance = await self.get_balance(position_data)
-                hl_balance = await self.hl_client.get_balance()
-                msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
+                hl_pnl, hl_balance = await self.hl_client.get_balance()
+                msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Pnl: [Meteora: {position_data.pnlUsd}, Hyperliquid: {hl_pnl}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
             else:
                 msg += " | Sem posição ativa."
 
@@ -353,7 +363,7 @@ class DeltaNeutralSniperBot:
 
         # Verifica se precisamos de atualizar o range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
-            self.last_known_range = await self.hl_client.calculate_dynamic_range_width()
+            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             self.last_calculation_time = current_time
 
         # Verifica se o range é abusivo
@@ -398,7 +408,7 @@ class DeltaNeutralSniperBot:
                         continue
                 position_data = await self.rebalanced_management(position_data, margin_percentage,
                                                                  reserve_sol_usdc)
-                last_heartbeat = await self.heartbeat_log(position_data, last_heartbeat, heartbeat_interval)
+                last_heartbeat = await self.heartbeat_log(last_heartbeat, heartbeat_interval)
 
                 await asyncio.sleep(5)
             except Exception as e:
@@ -406,7 +416,7 @@ class DeltaNeutralSniperBot:
                 await asyncio.sleep(30)  # Cooldown em caso de erro de rede
 
     async def test(self):
-        return await self.hl_client.calculate_dynamic_range_width()
+        return await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
 
 
 logging.basicConfig(

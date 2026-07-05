@@ -16,6 +16,7 @@ class PositionStatus:
     size: Optional[int] = None
     totalXAmount: Optional[float] = None
     totalYAmount: Optional[float] = None
+    pnlUsd: Optional[float] = None
 
 
 @dataclass

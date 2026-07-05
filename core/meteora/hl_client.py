@@ -124,8 +124,10 @@ class HlClient:
 
         return RangeStatus.INSIDE
 
-    async def get_balance(self) -> float:
-        return await self.hl_exchange.get_available_balance()
+    async def get_balance(self) -> tuple[float | None, float]:
+        position = await self.hl_exchange.get_open_position(self.symbol)
+        balance = await self.hl_exchange.get_available_balance()
+        return position.unrealizedPnl, balance
 
     async def calculate_dynamic_range_width(self, limit=30, lookback=14):
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=limit)
@@ -133,4 +135,4 @@ class HlClient:
 
     async def adjust_balance(self, capital_amount: float, dex_price: float) -> tuple[
         float, float]:
-        return await self.hl_exchange.get_perfect_quantities(capital_amount, dex_price, "SOL/USDC:USDC")
+        return await self.hl_exchange.get_perfect_quantities(capital_amount, dex_price, self.symbol)
