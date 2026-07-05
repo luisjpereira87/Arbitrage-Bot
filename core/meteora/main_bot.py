@@ -75,7 +75,7 @@ class DeltaNeutralSniperBot:
         self.cooldown_until = 0
         self.last_known_range = 0.0
         self.last_calculation_time = 0
-        self.lookback_range = 5
+        self.lookback_range = 10
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
 
@@ -238,9 +238,17 @@ class DeltaNeutralSniperBot:
             self.out_of_range_since = None  # Limpa qualquer timer pendente
             return True
         """
+
         if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
             logging.info(f"⚠️ Preço saiu do range. Lado: {status}")
             self.out_of_range_since = None  # Limpa qualquer timer pendente
+            return True
+
+        hl_pnl, _ = await self.hl_client.get_balance()
+        position_data = await self.meteora_client.get_position()
+        total_pnl = hl_pnl + position_data.pnlUsd
+        if total_pnl > (self.total_usdc_capital * 0.004):
+            logging.info(f"✅ Preço atingiu a meta de 0.2%: {total_pnl:.2f}: {status}")
             return True
 
         # 2. SE VOLTOU PARA DENTRO (Reset do timer)
@@ -343,7 +351,7 @@ class DeltaNeutralSniperBot:
             if position_data:
                 wallet_balance = await self.get_balance(position_data)
                 hl_pnl, hl_balance = await self.hl_client.get_balance()
-                msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Pnl: [Meteora: {position_data.pnlUsd}, Hyperliquid: {hl_pnl}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
+                msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Pnl: [Meteora: {position_data.pnlUsd:.2f}, Hyperliquid: {hl_pnl:.2f}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
             else:
                 msg += " | Sem posição ativa."
 
