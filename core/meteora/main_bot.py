@@ -75,7 +75,6 @@ class DeltaNeutralSniperBot:
         self.cooldown_until = 0
         self.last_known_range = 0.0
         self.last_calculation_time = 0
-        self.lookback_range = 10
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
 
@@ -247,7 +246,7 @@ class DeltaNeutralSniperBot:
         hl_pnl, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
         total_pnl = hl_pnl + position_data.pnlUsd
-        if total_pnl > (self.total_usdc_capital * 0.004):
+        if total_pnl > (self.total_usdc_capital * 0.002):
             logging.info(f"✅ Preço atingiu a meta de 0.2%: {total_pnl:.2f}: {status}")
             return True
 
@@ -315,7 +314,7 @@ class DeltaNeutralSniperBot:
 
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
+            range_percentage = await self.hl_client.calculate_dynamic_range_width()
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
                                                            range_percentage)
             position = await self.meteora_client.get_position()
@@ -332,7 +331,7 @@ class DeltaNeutralSniperBot:
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
+            range_percentage = await self.hl_client.calculate_dynamic_range_width()
             is_open = await self.open_position(market_status.raw_price, range_percentage)
             position = await self.meteora_client.get_position()
             if is_open:
@@ -371,7 +370,7 @@ class DeltaNeutralSniperBot:
 
         # Verifica se precisamos de atualizar o range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
-            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
+            self.last_known_range = await self.hl_client.calculate_dynamic_range_width()
             self.last_calculation_time = current_time
 
         # Verifica se o range é abusivo
@@ -422,9 +421,6 @@ class DeltaNeutralSniperBot:
             except Exception as e:
                 logging.error(f"❌ Erro no ciclo do sniper: {e}")
                 await asyncio.sleep(30)  # Cooldown em caso de erro de rede
-
-    async def test(self):
-        return await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
 
 
 logging.basicConfig(
