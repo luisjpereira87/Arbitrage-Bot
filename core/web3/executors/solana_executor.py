@@ -522,6 +522,8 @@ class SolanaExecutor(ExecutorBase, ABC):
             if token.address.lower() == self.usdc_address.lower():
                 continue
 
+            await asyncio.sleep(0.5)
+
             # Obter saldo atual (em unidades atómicas)
             balance = await self.get_token_balance(token.address, Chains.SOLANA)
 
@@ -549,25 +551,30 @@ class SolanaExecutor(ExecutorBase, ABC):
             )
 
             if quote:
-                # Validação: só trocamos se o valor de saída for >= 0.50 USDC
-                # out_amount_human = int(quote.data_quote['outAmount']) / (10 ** usdc_token.decimals)
+                try:
+                    # Validação: só trocamos se o valor de saída for >= 0.50 USDC
+                    # out_amount_human = int(quote.data_quote['outAmount']) / (10 ** usdc_token.decimals)
 
-                print(f"💰 A processar swap de {token.address}: {human_amount:.4f} unidades...")
+                    print(f"💰 A processar swap de {token.address}: {human_amount:.4f} unidades...")
 
-                tx_hash = await self.send_transaction(
-                    pools_list=[],
-                    dir_list=[],
-                    tokens_list=[token.address],
-                    amount_usd=amount_to_swap,  # Valor atómico
-                    chain=Chains.SOLANA,
-                    quote_data=quote.data_quote
-                )
+                    tx_hash = await self.send_transaction(
+                        pools_list=[],
+                        dir_list=[],
+                        tokens_list=[token.address],
+                        amount_usd=amount_to_swap,  # Valor atómico
+                        chain=Chains.SOLANA,
+                        quote_data=quote.data_quote
+                    )
 
-                if tx_hash:
-                    successes.append(True)
-                    print(f"✅ Swap de {token.address} concluído com sucesso.")
-                else:
-                    print(f"❌ Falha ao enviar transação de swap para {token.address}.")
+                    if tx_hash:
+                        successes.append(True)
+                        print(f"✅ Swap de {token.address} concluído com sucesso.")
+                    else:
+                        print(f"❌ Falha ao enviar transação de swap para {token.address}.")
+
+                except Exception as e:
+                    print(f"⚠️ Erro no swap do token {token.address}: {e}")
+                    break
             else:
                 print(f"⚠️ Nenhuma quote disponível para {token.address}. Talvez a liquidez seja muito baixa.")
 
