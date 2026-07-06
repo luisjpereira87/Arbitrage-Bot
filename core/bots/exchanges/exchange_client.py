@@ -551,8 +551,27 @@ class ExchangeClient(ExchangeBase, ABC):
             )
             # -------------------------------
 
+            safe_order = {
+                'market_index': int(order['market_index']),
+                'client_order_index': int(order['client_order_index']),
+                'base_amount': int(order['base_amount']),
+                'avg_execution_price': int(order['avg_execution_price']),
+                'is_ask': bool(order['is_ask']),
+                'order_type': int(order['order_type']),
+                'time_in_force': int(order['time_in_force']),
+                'reduce_only': bool(order['reduce_only']),
+                'trigger_price': int(order['trigger_price']),
+                'order_expiry': int(order['order_expiry']),
+                'integrator_account_index': int(order['integrator_account_index']),
+                'integrator_taker_fee': int(order['integrator_taker_fee']),
+                'integrator_maker_fee': int(order['integrator_maker_fee']),
+                'nonce': int(order['nonce']),
+                'api_key_index': int(apiKeyIndex),
+                'account_index': int(accountIndex),
+            }
+
             logging.info("✍️ [PATCH] Chamando lighter_sign_create_order...")
-            txType, txInfo = self.exchange.lighter_sign_create_order(signer, order)
+            txType, txInfo = self.exchange.lighter_sign_create_order(signer, safe_order)
             logging.info("✨ [PATCH] Assinatura realizada com sucesso!")
         except Exception as e:
             # Aqui capturamos o erro de memória antes de ele matar o bot
