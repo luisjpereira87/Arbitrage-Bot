@@ -324,6 +324,7 @@ class DeltaNeutralSniperBot:
                 await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
             else:
                 logging.error("Meteora rebalance failed")
+            await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
         return position
 
     async def open_position_management(self, position: PositionStatus | None,
@@ -334,8 +335,8 @@ class DeltaNeutralSniperBot:
             range_percentage = await self.hl_client.calculate_dynamic_range_width()
             is_open = await self.open_position(market_status.raw_price, range_percentage)
             position = await self.meteora_client.get_position()
-            if is_open:
-                await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
+            # if is_open:
+            await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
         return position
 
     async def heartbeat_log(self, last_heartbeat: float, heartbeat_interval: int):
@@ -392,7 +393,7 @@ class DeltaNeutralSniperBot:
         await asyncio.sleep(2)
 
         margin_percentage = 0.05
-        reserve_sol_usdc = 10.0
+        reserve_sol_usdc = 3.0
 
         heartbeat_interval = 120
         last_heartbeat = time.time()

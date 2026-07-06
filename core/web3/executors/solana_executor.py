@@ -495,7 +495,7 @@ class SolanaExecutor(ExecutorBase, ABC):
             logging.error(f"❌ Erro na validação Solana: {e}")
             return False, 0
 
-    async def cleanup_wallet(self, reserve_sol_usdc=10.0):
+    async def cleanup_wallet(self, reserve_sol_usdc=3):
         """
         Limpeza de carteira: converte excedentes de SOL e outros tokens para USDC.
         Usa conversões atómicas seguras para evitar erros de decimais.
@@ -528,7 +528,8 @@ class SolanaExecutor(ExecutorBase, ABC):
             # B. Lógica de cálculo de montante a vender
             if token.address.lower() == sol_token.address.lower():
                 # Só vendemos se exceder a margem de segurança (2x reserva)
-                target_buffer = sol_to_reserve_lamports * 2
+                # target_buffer = sol_to_reserve_lamports * 2
+                target_buffer = sol_to_reserve_lamports
                 if balance > target_buffer:
                     amount_to_swap = balance - sol_to_reserve_lamports
                 else:
@@ -549,26 +550,26 @@ class SolanaExecutor(ExecutorBase, ABC):
 
             if quote:
                 # Validação: só trocamos se o valor de saída for >= 0.50 USDC
-                out_amount_human = int(quote.data_quote['outAmount']) / (10 ** usdc_token.decimals)
+                # out_amount_human = int(quote.data_quote['outAmount']) / (10 ** usdc_token.decimals)
 
-                if out_amount_human >= 0.50:
-                    print(f"💰 A processar swap de {token.address}: {human_amount:.4f} unidades...")
+                print(f"💰 A processar swap de {token.address}: {human_amount:.4f} unidades...")
 
-                    tx_hash = await self.send_transaction(
-                        pools_list=[],
-                        dir_list=[],
-                        tokens_list=[token.address],
-                        amount_usd=amount_to_swap,  # Valor atómico
-                        chain=Chains.SOLANA,
-                        quote_data=quote.data_quote
-                    )
+                tx_hash = await self.send_transaction(
+                    pools_list=[],
+                    dir_list=[],
+                    tokens_list=[token.address],
+                    amount_usd=amount_to_swap,  # Valor atómico
+                    chain=Chains.SOLANA,
+                    quote_data=quote.data_quote
+                )
 
-                    if tx_hash:
-                        successes.append(True)
-                        print(f"✅ Swap de {token.address} concluído com sucesso.")
+                if tx_hash:
+                    successes.append(True)
+                    print(f"✅ Swap de {token.address} concluído com sucesso.")
                 else:
-                    print(
-                        f"⚠️ Valor de swap muito baixo ({out_amount_human:.2f} USDC) para o token {token.address}. Ignorado.")
+                    print(f"❌ Falha ao enviar transação de swap para {token.address}.")
+            else:
+                print(f"⚠️ Nenhuma quote disponível para {token.address}. Talvez a liquidez seja muito baixa.")
 
         return len(successes) > 0
 
