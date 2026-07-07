@@ -142,51 +142,43 @@ async function ensureGasTracker(currentPrice, totalNeededLamports) {
 
 async function cleanupAndSettle(reserveSolAmount = 3.0) {
     try {
-        console.log(`🧹 [Cleaner] Iniciando consolidação para USDC. Reserva SOL: ${reserveSolAmount} SOL.`);
+        console.log(`🧹 [Cleaner] Iniciando consolidação...`);
 
-        // 1. Obter todos os tokens da carteira (exceto o que queremos manter)
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-            programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-        });
+        // 1. LIMPEZA DE SOL NATIVO (O que tens agora nos 14,50$)
+        const solBalance = await connection.getBalance(wallet.publicKey);
+        const solBalanceUi = solBalance / 1_000_000_000;
 
-        for (const account of tokenAccounts.value) {
-            const parsedInfo = account.account.data.parsed.info;
-            const mint = parsedInfo.mint;
-            const balance = parsedInfo.tokenAmount.uiAmount;
-            const amountRaw = parsedInfo.tokenAmount.amount;
+        // Margem de segurança de 0.05 SOL para taxas de rede durante o swap
+        if (solBalanceUi > reserveSolAmount + 0.1) {
+            const excessoSol = solBalanceUi - reserveSolAmount - 0.02;
+            console.log(`🔄 [Cleaner] Consolidando excedente de SOL nativo: ${excessoSol.toFixed(4)}`);
 
-            // Ignorar se o saldo for zero ou se já for USDC
-            if (balance <= 0 || mint === USDC_MINT) continue;
-
-            // 2. Se for SOL (WSOL), calcular apenas o excedente da reserva
-            if (mint === WSOL_MINT) {
-                const solBalance = await connection.getBalance(wallet.publicKey);
-                const solBalanceUi = solBalance / 1_000_000_000;
-
-                if (solBalanceUi <= reserveSolAmount) {
-                    console.log(`✅ [Cleaner] Saldo de SOL (${solBalanceUi.toFixed(2)}) abaixo ou igual à reserva. Mantendo.`);
-                    continue;
-                }
-
-                const excessoSol = solBalanceUi - reserveSolAmount;
-                console.log(`🔄 [Cleaner] Consolidando excedente de SOL: ${excessoSol.toFixed(4)}...`);
-                await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(excessoSol * 1_000_000_000));
-            }
-            // 3. Se for qualquer outro token (resíduo de LP), trocar tudo por USDC
-            else {
-                console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
-                // Precisamos de garantir que o montante é um número inteiro (raw units)
-                await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
-            }
-
-            // Pausa entre swaps para evitar conflito de nonce na Solana
+            // Aqui usamos o WSOL_MINT como destino do swap (ou a Jupiter trata o nativo)
+            // IMPORTANTE: Certifica-te que o teu executeJupiterSwap aceita SOL nativo
+            await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, Math.round(excessoSol * 1_000_000_000));
             await new Promise(r => setTimeout(r, 4000));
         }
 
-        console.log(`✨ [Cleaner] Consolidação concluída.`);
+        // 2. LIMPEZA DE TOKENS (O que a Meteora deixa)
+        // Usa a lógica que te passei de combinar Tokenkeg + Tokenz
+        const tokenAccounts = await getAllTokenAccounts(connection, wallet.publicKey);
+
+        for (const account of tokenAccounts) {
+            const parsedInfo = account.account.data.parsed.info;
+            const mint = parsedInfo.mint;
+            const amountRaw = parsedInfo.tokenAmount.amount;
+            const balance = parsedInfo.tokenAmount.uiAmount;
+
+            if (balance <= 0 || mint === USDC_MINT || mint === "So11111111111111111111111111111111111111112") continue;
+
+            console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
+            await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
+            await new Promise(r => setTimeout(r, 4000));
+        }
+
         return true;
     } catch (error) {
-        console.error(`❌ [Cleaner] Erro crítico na limpeza: ${error.message}`);
+        console.error(`❌ [Cleaner] Erro: ${error.message}`);
         return false;
     }
 }
