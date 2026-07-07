@@ -165,7 +165,7 @@ async function cleanupAndSettle(reserveSolAmount = 3.0) {
             programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
         });
 
-        for (const account of tokenAccounts) {
+        for (const account of tokenAccounts.value) {
             const parsedInfo = account.account.data.parsed.info;
             const mint = parsedInfo.mint;
             const amountRaw = parsedInfo.tokenAmount.amount;
