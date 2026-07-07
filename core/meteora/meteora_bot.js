@@ -140,6 +140,42 @@ async function ensureGasTracker(currentPrice, totalNeededLamports) {
     }
 }
 
+async function cleanupAndSettleSimple(tokenMintToClean) {
+    try {
+        console.log(`🧹 [Cleaner] Iniciando consolidação direta...`);
+
+        // 1. Swap de SOL NATIVO para USDC
+        const solBalance = await connection.getBalance(wallet.publicKey);
+        const solBalanceUi = solBalance / 1_000_000_000;
+
+        // Define o excedente (ex: tudo acima de 3 SOL)
+        const reserve = 3.0;
+        if (solBalanceUi > (reserve + 0.05)) {
+            const amountToSwap = Math.round((solBalanceUi - reserve - 0.02) * 1_000_000_000);
+            console.log(`🔄 Swap de SOL nativo: ${(amountToSwap/1e9).toFixed(4)} SOL`);
+            await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, amountToSwap);
+            await new Promise(r => setTimeout(r, 4000));
+        }
+
+        // 2. Swap de um Token Específico para USDC (o que sobrar da posição)
+        const tokenAccount = await connection.getTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(tokenMintToClean) });
+        if (tokenAccount.value.length > 0) {
+            const balanceInfo = await connection.getTokenAccountBalance(tokenAccount.value[0].pubkey);
+            const rawAmount = balanceInfo.value.amount;
+
+            if (parseInt(rawAmount) > 0) {
+                console.log(`🔄 Swap de Token ${tokenMintToClean}: ${balanceInfo.value.uiAmount}`);
+                await executeJupiterSwap(tokenMintToClean, USDC_MINT, parseInt(rawAmount));
+            }
+        }
+
+        return true;
+    } catch (error) {
+        console.error(`❌ [Cleaner] Erro: ${error.message}`);
+        return false;
+    }
+}
+
 async function cleanupAndSettle(reserveSolAmount = 3.0) {
     try {
         console.log(`🧹 [Cleaner] Iniciando consolidação...`);
@@ -322,7 +358,7 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     }
 
     for (const position of result.userPositions) {
-        console.error(`🧹 A remover liquidez da posição: ${position.publicKey.toBase58()}`);
+        console.log(`🧹 A remover liquidez da posição: ${position.publicKey.toBase58()}`);
 
         const lowerBinId = position.positionData.lowerBinId;
         const upperBinId = position.positionData.upperBinId;
@@ -355,7 +391,7 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     console.log(`✅ Liquidez removida. Aguardando confirmação...`);
     await new Promise(resolve => setTimeout(resolve, 5000));
 
-    const success = await cleanupAndSettle();
+    const success = await cleanupAndSettleSimple();
 
     if (success) {
         console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");

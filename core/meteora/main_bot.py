@@ -238,14 +238,18 @@ class DeltaNeutralSniperBot:
             return True
         """
 
-        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
-            logging.info(f"⚠️ Preço saiu do range. Lado: {status}")
-            self.out_of_range_since = None  # Limpa qualquer timer pendente
-            return True
-
         hl_pnl, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
         total_pnl = hl_pnl + position_data.pnlUsd
+
+        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
+
+            logging.info(f"⚠️ Preço saiu do range. Lado: {status}")
+            if total_pnl >= 0:
+                logging.info(f"⚠️ A tentar recuperar o 0/0")
+                self.out_of_range_since = None  # Limpa qualquer timer pendente
+                return True
+
         if total_pnl > (self.total_usdc_capital * 0.0012):
             logging.info(f"✅ Preço atingiu a meta de 0.2%: {total_pnl:.2f}: {status}")
             return True
