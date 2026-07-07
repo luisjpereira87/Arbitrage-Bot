@@ -221,7 +221,7 @@ async function cleanupAndSettle__(reserveSolAmount = 3.0) {
     }
 }
 
-async function cleanupAndSettle(reserveUsdAmount = 3.0) {
+async function cleanupAndSettle(poolAddress, reserveUsdAmount = 3.0) {
     try {
         console.log(`🧹 [Cleaner] Iniciando consolidação (Reserva: $${reserveUsdAmount} USD)...`);
 
@@ -448,7 +448,7 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     console.log(`✅ Liquidez removida. Aguardando confirmação...`);
     await new Promise(resolve => setTimeout(resolve, 5000));
 
-    const success = await cleanupAndSettle();
+    const success = await cleanupAndSettle(poolAddress, 3.0);
 
     if (success) {
         console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
