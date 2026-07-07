@@ -22,8 +22,8 @@ class MeteoraClient:
             # Lê o output e espera o processo acabar, mas de forma mais direta
             stdout, stderr = await process.communicate()
 
-            # print(stdout.decode())
-            # print(stderr.decode())
+            print(stdout.decode())
+            print(stderr.decode())
             # Se o Node.js estiver a enviar logs inúteis, isso pode estar a atrasar.
             # Garante que só tens o JSON na saída.
             return self.extract_json_response(stdout.decode())
