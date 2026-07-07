@@ -314,7 +314,9 @@ class DeltaNeutralSniperBot:
 
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
+            logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
                                                            range_percentage)
             position = await self.meteora_client.get_position()
@@ -327,12 +329,14 @@ class DeltaNeutralSniperBot:
             # await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
         return position
 
-    async def open_position_management(self, position: PositionStatus | None,
+    async def open_position_management(self, position: PositionStatus | None, range_margin_pct=0.005,
                                        reserve_sol_usdc=10.0) -> PositionStatus | None:
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
+            logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
             is_open = await self.open_position(market_status.raw_price, range_percentage)
             position = await self.meteora_client.get_position()
             # if is_open:
@@ -392,7 +396,7 @@ class DeltaNeutralSniperBot:
         await self.hl_client.start()
         await asyncio.sleep(2)
 
-        margin_percentage = 0.05
+        margin_percentage = 0.1
         reserve_sol_usdc = 3.0
 
         heartbeat_interval = 120
@@ -405,7 +409,8 @@ class DeltaNeutralSniperBot:
 
                 if position_data is None:
                     if not await self.should_wait_for_market():
-                        position_data = await self.open_position_management(position_data, reserve_sol_usdc)
+                        position_data = await self.open_position_management(position_data, margin_percentage,
+                                                                            reserve_sol_usdc)
                     else:
                         await asyncio.sleep(10)  # Descanso profundo
                     continue
