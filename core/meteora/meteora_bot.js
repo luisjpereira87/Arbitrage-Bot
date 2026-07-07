@@ -176,7 +176,7 @@ async function cleanupAndSettleSimple(tokenMintToClean) {
     }
 }
 
-async function cleanupAndSettle(reserveSolAmount = 3.0) {
+async function cleanupAndSettle__(reserveSolAmount = 3.0) {
     try {
         console.log(`🧹 [Cleaner] Iniciando consolidação...`);
 
@@ -212,6 +212,63 @@ async function cleanupAndSettle(reserveSolAmount = 3.0) {
             console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
             await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
             await new Promise(r => setTimeout(r, 4000));
+        }
+
+        return true;
+    } catch (error) {
+        console.error(`❌ [Cleaner] Erro: ${error.message}`);
+        return false;
+    }
+}
+
+async function cleanupAndSettle(reserveUsdAmount = 3.0) {
+    try {
+        console.log(`🧹 [Cleaner] Iniciando consolidação (Reserva: $${reserveUsdAmount} USD)...`);
+
+        const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
+        const activeBin = await dlmmPool.getActiveBin();
+        const precoRealMeteora = dlmmPool.fromPricePerLamport(parseFloat(activeBin.price));
+
+        let currentSolPrice = precoRealMeteora;
+        if (dlmmPool.tokenX.decimal < dlmmPool.tokenY.decimal) {
+            currentSolPrice = 1 / precoRealMeteora;
+        }
+
+        // 1. LIMPEZA DE SOL NATIVO
+        const solBalance = await connection.getBalance(wallet.publicKey);
+        const solBalanceUi = solBalance / 1_000_000_000;
+
+        // Calcula a reserva necessária em SOL
+        const reserveSol = reserveUsdAmount / currentSolPrice;
+
+        // Verifica se o saldo é maior que a reserva (com uma pequena margem de segurança de 0.05 SOL para taxas)
+        if (solBalanceUi > (reserveSol + 0.05)) {
+            const excessoSol = solBalanceUi - reserveSol - 0.02; // Deixa um extra de 0.02 para garantir execução
+
+            console.log(`🔄 [Cleaner] Consolidando excedente de SOL: ${excessoSol.toFixed(4)}`);
+
+            // Usa o WSOL_MINT para o swap de SOL nativo
+            await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, Math.round(excessoSol * 1_000_000_000));
+            await new Promise(r => setTimeout(r, 5000)); // Aumentei para 5s para maior estabilidade
+        }
+
+        // 2. LIMPEZA DE TOKENS
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+            programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        });
+
+        for (const account of tokenAccounts.value) {
+            const parsedInfo = account.account.data.parsed.info;
+            const mint = parsedInfo.mint;
+            const amountRaw = parsedInfo.tokenAmount.amount;
+            const balance = parsedInfo.tokenAmount.uiAmount;
+
+            // Filtros básicos para evitar erros
+            if (balance <= 0 || mint === USDC_MINT || mint === "So11111111111111111111111111111111111111112") continue;
+
+            console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
+            await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
+            await new Promise(r => setTimeout(r, 5000));
         }
 
         return true;
@@ -391,7 +448,7 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     console.log(`✅ Liquidez removida. Aguardando confirmação...`);
     await new Promise(resolve => setTimeout(resolve, 5000));
 
-    const success = await cleanupAndSettleSimple();
+    const success = await cleanupAndSettle();
 
     if (success) {
         console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
