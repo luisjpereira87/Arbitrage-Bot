@@ -161,7 +161,9 @@ async function cleanupAndSettle(reserveSolAmount = 3.0) {
 
         // 2. LIMPEZA DE TOKENS (O que a Meteora deixa)
         // Usa a lógica que te passei de combinar Tokenkeg + Tokenz
-        const tokenAccounts = await getAllTokenAccounts(connection, wallet.publicKey);
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+            programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        });
 
         for (const account of tokenAccounts) {
             const parsedInfo = account.account.data.parsed.info;
