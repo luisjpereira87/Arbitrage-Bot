@@ -140,6 +140,57 @@ async function ensureGasTracker(currentPrice, totalNeededLamports) {
     }
 }
 
+async function cleanupAndSettle(reserveSolAmount = 3.0) {
+    try {
+        console.log(`🧹 [Cleaner] Iniciando consolidação para USDC. Reserva SOL: ${reserveSolAmount} SOL.`);
+
+        // 1. Obter todos os tokens da carteira (exceto o que queremos manter)
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+            programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        });
+
+        for (const account of tokenAccounts.value) {
+            const parsedInfo = account.account.data.parsed.info;
+            const mint = parsedInfo.mint;
+            const balance = parsedInfo.tokenAmount.uiAmount;
+            const amountRaw = parsedInfo.tokenAmount.amount;
+
+            // Ignorar se o saldo for zero ou se já for USDC
+            if (balance <= 0 || mint === USDC_MINT) continue;
+
+            // 2. Se for SOL (WSOL), calcular apenas o excedente da reserva
+            if (mint === WSOL_MINT) {
+                const solBalance = await connection.getBalance(wallet.publicKey);
+                const solBalanceUi = solBalance / 1_000_000_000;
+
+                if (solBalanceUi <= reserveSolAmount) {
+                    console.log(`✅ [Cleaner] Saldo de SOL (${solBalanceUi.toFixed(2)}) abaixo ou igual à reserva. Mantendo.`);
+                    continue;
+                }
+
+                const excessoSol = solBalanceUi - reserveSolAmount;
+                console.log(`🔄 [Cleaner] Consolidando excedente de SOL: ${excessoSol.toFixed(4)}...`);
+                await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(excessoSol * 1_000_000_000));
+            }
+            // 3. Se for qualquer outro token (resíduo de LP), trocar tudo por USDC
+            else {
+                console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
+                // Precisamos de garantir que o montante é um número inteiro (raw units)
+                await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
+            }
+
+            // Pausa entre swaps para evitar conflito de nonce na Solana
+            await new Promise(r => setTimeout(r, 4000));
+        }
+
+        console.log(`✨ [Cleaner] Consolidação concluída.`);
+        return true;
+    } catch (error) {
+        console.error(`❌ [Cleaner] Erro crítico na limpeza: ${error.message}`);
+        return false;
+    }
+}
+
 // =====================================================================
 // 4. MATHEMATICS & RANGE INTELLIGENCE
 // =====================================================================
@@ -199,7 +250,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Spot,
+            strategyType: StrategyType.Curve,
         },
     });
 
@@ -247,7 +298,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Spot
+            strategyType: StrategyType.Curve
         },
     });
 
@@ -308,7 +359,13 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     }
 
     console.log(`✅ Liquidez removida. Aguardando confirmação...`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    const success = await cleanupAndSettle();
+
+    if (success) {
+        console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
+    }
 
     // ... (resto do teu código de liquidação de SOL permanece igual)
     //endScript("SUCCESS_CLOSE_ALL");
