@@ -98,7 +98,7 @@ async function executeJupiterSwap(inputMint, outputMint, amountInDecimals) {
             signature: txid
         }, 'confirmed');
 
-        console.error(`🔄 [SDK Jupiter] Swap Concluído! TX: ${txid}`);
+        console.log(`🔄 [SDK Jupiter] Swap Concluído! TX: ${txid}`);
         return true;
     } catch (error) {
         console.error(`❌ [SDK Jupiter] Falha ao executar o swap: ${error.message}`);
@@ -277,7 +277,7 @@ async function calculateRangeMetrics(currentPrice, rangePercent, skew = 0.5) {
 // =====================================================================
 // 5. CORE EXECUTION FUNCTIONS
 // =====================================================================
-async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
+async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
@@ -329,8 +329,8 @@ async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPric
     const totalNeeded = totalXAmount.add(totalRentLamports).add(BUFFER_EXTRA);
 
     // 4. Gas Tracker (Agora com o valor exato calculado)
-    //const gasOk = await ensureGasTracker(currentPrice, totalNeeded.toNumber());
-    //if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
+    const gasOk = await ensureGasTracker(currentPrice, totalNeeded.toNumber());
+    if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
 
     // 5. Balanceamento (Swap se necessário)
 
@@ -406,7 +406,7 @@ async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPric
     return true;
 }
 
-async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
+async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
