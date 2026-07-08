@@ -406,7 +406,7 @@ async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPric
     return true;
 }
 
-sync function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
+async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
