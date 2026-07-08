@@ -344,29 +344,34 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         await new Promise(r => setTimeout(r, 3000));
     }
     **/
+    const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
+    const solAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(WSOL_MINT) });
 
-    const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
-    const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
+    const usdcBalance = usdcAccounts.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
+    const solBalance = solAccounts.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
 
-    // Usamos o totalUsdcCapitalInjetar (que calculaste no Passo 1) como o alvo
-    if (Math.abs(usdcBalance - totalUsdcCapitalInjetar) > 0.50) {
+    // O que tens agora em valor USD total
+    const currentTotalValue = usdcBalance + (solBalance * currentPrice);
 
-        const diffUsdc = totalUsdcCapitalInjetar - usdcBalance;
+    // O que queres ter (30% SOL / 70% USDC)
+    const targetUsdc = currentTotalValue * 0.70;
+    const targetSolValue = currentTotalValue * 0.30;
 
+    // A diferença real para atingir o alvo
+    const diffUsdc = targetUsdc - usdcBalance;
+
+    if (Math.abs(diffUsdc) > 1.0) { // Tolerância de 1$
         if (diffUsdc > 0) {
             // Precisas de mais USDC: Vendes SOL
             const solParaVender = diffUsdc / currentPrice;
-            console.log(`🔄 [Swap] Vendendo SOL para obter $${diffUsdc.toFixed(2)} USDC...`);
             await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
         } else {
-            // Tens USDC a mais: Compras SOL (usa o Math.abs para o valor ser positivo)
+            // Tens USDC a mais: Compras SOL
             const solParaComprar = Math.abs(diffUsdc) / currentPrice;
-            console.log(`🔄 [Swap] Comprando SOL usando $${Math.abs(diffUsdc).toFixed(2)} USDC...`);
             await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(Math.abs(diffUsdc) * 1_000_000));
         }
-
-        await new Promise(r => setTimeout(r, 3000));
     }
+
 
     // 6. Injeção
     console.log(`⚡ A injetar X:${totalXAmount.toString()} Y:${totalYAmount.toString()}...`);
