@@ -140,87 +140,6 @@ async function ensureGasTracker(currentPrice, totalNeededLamports) {
     }
 }
 
-async function cleanupAndSettleSimple(tokenMintToClean) {
-    try {
-        console.log(`🧹 [Cleaner] Iniciando consolidação direta...`);
-
-        // 1. Swap de SOL NATIVO para USDC
-        const solBalance = await connection.getBalance(wallet.publicKey);
-        const solBalanceUi = solBalance / 1_000_000_000;
-
-        // Define o excedente (ex: tudo acima de 3 SOL)
-        const reserve = 3.0;
-        if (solBalanceUi > (reserve + 0.05)) {
-            const amountToSwap = Math.round((solBalanceUi - reserve - 0.02) * 1_000_000_000);
-            console.log(`🔄 Swap de SOL nativo: ${(amountToSwap/1e9).toFixed(4)} SOL`);
-            await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, amountToSwap);
-            await new Promise(r => setTimeout(r, 4000));
-        }
-
-        // 2. Swap de um Token Específico para USDC (o que sobrar da posição)
-        const tokenAccount = await connection.getTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(tokenMintToClean) });
-        if (tokenAccount.value.length > 0) {
-            const balanceInfo = await connection.getTokenAccountBalance(tokenAccount.value[0].pubkey);
-            const rawAmount = balanceInfo.value.amount;
-
-            if (parseInt(rawAmount) > 0) {
-                console.log(`🔄 Swap de Token ${tokenMintToClean}: ${balanceInfo.value.uiAmount}`);
-                await executeJupiterSwap(tokenMintToClean, USDC_MINT, parseInt(rawAmount));
-            }
-        }
-
-        return true;
-    } catch (error) {
-        console.error(`❌ [Cleaner] Erro: ${error.message}`);
-        return false;
-    }
-}
-
-async function cleanupAndSettle__(reserveSolAmount = 3.0) {
-    try {
-        console.log(`🧹 [Cleaner] Iniciando consolidação...`);
-
-        // 1. LIMPEZA DE SOL NATIVO (O que tens agora nos 14,50$)
-        const solBalance = await connection.getBalance(wallet.publicKey);
-        const solBalanceUi = solBalance / 1_000_000_000;
-
-        // Margem de segurança de 0.05 SOL para taxas de rede durante o swap
-        if (solBalanceUi > reserveSolAmount + 0.1) {
-            const excessoSol = solBalanceUi - reserveSolAmount - 0.02;
-            console.log(`🔄 [Cleaner] Consolidando excedente de SOL nativo: ${excessoSol.toFixed(4)}`);
-
-            // Aqui usamos o WSOL_MINT como destino do swap (ou a Jupiter trata o nativo)
-            // IMPORTANTE: Certifica-te que o teu executeJupiterSwap aceita SOL nativo
-            await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, Math.round(excessoSol * 1_000_000_000));
-            await new Promise(r => setTimeout(r, 4000));
-        }
-
-        // 2. LIMPEZA DE TOKENS (O que a Meteora deixa)
-        // Usa a lógica que te passei de combinar Tokenkeg + Tokenz
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-            programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-        });
-
-        for (const account of tokenAccounts.value) {
-            const parsedInfo = account.account.data.parsed.info;
-            const mint = parsedInfo.mint;
-            const amountRaw = parsedInfo.tokenAmount.amount;
-            const balance = parsedInfo.tokenAmount.uiAmount;
-
-            if (balance <= 0 || mint === USDC_MINT || mint === "So11111111111111111111111111111111111111112") continue;
-
-            console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
-            await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
-            await new Promise(r => setTimeout(r, 4000));
-        }
-
-        return true;
-    } catch (error) {
-        console.error(`❌ [Cleaner] Erro: ${error.message}`);
-        return false;
-    }
-}
-
 async function cleanupAndSettle(poolAddress, reserveUsdAmount = 3.0) {
     try {
         console.log(`🧹 [Cleaner] Iniciando consolidação (Reserva: $${reserveUsdAmount} USD)...`);
@@ -281,7 +200,7 @@ async function cleanupAndSettle(poolAddress, reserveUsdAmount = 3.0) {
 // =====================================================================
 // 4. MATHEMATICS & RANGE INTELLIGENCE
 // =====================================================================
-async function calculateRangeMetrics(currentPrice, rangePercent) {
+async function calculateRangeMetrics__(currentPrice, rangePercent) {
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(POOL_CONFIG.address));
     const activeBin = await dlmmPool.getActiveBin();
 
@@ -315,6 +234,45 @@ async function calculateRangeMetrics(currentPrice, rangePercent) {
     return result;
 }
 
+async function calculateRangeMetrics(currentPrice, rangePercent, skew = 0.5) {
+    const dlmmPool = await DLMMClass.create(connection, new PublicKey(POOL_CONFIG.address));
+    const activeBin = await dlmmPool.getActiveBin();
+
+    // 1. Calcula a largura total em USD
+    const rangeWidthDollars = currentPrice * rangePercent;
+
+    // 2. Calcula quanto representa cada bin
+    const pctPerBin = POOL_CONFIG.binStep / 10000;
+    const dollarValuePerBin = currentPrice * pctPerBin;
+
+    // 3. Aplica o skew:
+    // Se skew for 0.5, o range é igual para ambos os lados.
+    // Se skew for 0.3, ficas com 30% do range abaixo e 70% acima.
+    const binsDown = Math.round((rangeWidthDollars * skew) / dollarValuePerBin);
+    const binsUp = Math.round((rangeWidthDollars * (1 - skew)) / dollarValuePerBin);
+
+    // Como o offset na Meteora é simétrico, para teres um skew tens de usar o maior lado
+    // para definir o "raio" de bins que o protocolo vai criar
+    const maxOffset = Math.max(binsDown, binsUp);
+
+    const priceMin = currentPrice - (rangeWidthDollars * skew);
+    const priceMax = currentPrice + (rangeWidthDollars * (1 - skew));
+
+    const result = {
+        status: "SUCCESS",
+        binsOffset: maxOffset, // O valor que precisas para o protocolo
+        totalBinsWidth: binsDown + binsUp,
+        activeBinId: activeBin.binId,
+        priceMin: priceMin,
+        priceMax: priceMax,
+        // Opcional: devolve os lados individuais para saberes o teu desvio
+        binsDown: binsDown,
+        binsUp: binsUp
+    };
+
+    return result;
+}
+
 
 // =====================================================================
 // 5. CORE EXECUTION FUNCTIONS
@@ -323,6 +281,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
+    /**
     // 1. Calcular o capital de injeção
     const alvoMetadeUsdc = totalUsdcCapital / 2;
     const solFinalAInjetar = alvoMetadeUsdc / currentPrice;
@@ -330,9 +289,23 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     // DEFINIÇÃO DOS BNs
     const totalXAmount = new anchor.BN(Math.floor(solFinalAInjetar * 1_000_000_000));
     const totalYAmount = new anchor.BN(Math.floor(alvoMetadeUsdc * 1_000_000));
+    **/
+
+    // 1. Calcular o capital de injeção (30% SOL / 70% USDC)
+    const solPercent = 0.30;
+    const usdcPercent = 0.70;
+
+    const totalSolCapital = totalUsdcCapital * solPercent; // Valor em USD do SOL que queres
+    const totalUsdcCapitalInjetar = totalUsdcCapital * usdcPercent; // Valor em USD do USDC que queres
+
+    const solFinalAInjetar = totalSolCapital / currentPrice;
+
+    // DEFINIÇÃO DOS BNs (Corrigidos para 30/70)
+    const totalXAmount = new anchor.BN(Math.floor(solFinalAInjetar * 1_000_000_000));
+    const totalYAmount = new anchor.BN(Math.floor(totalUsdcCapitalInjetar * 1_000_000));
 
     // 2. Obter Metrics e Quote
-    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars);
+    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars, 0.3);
     const quote = await dlmmPool.quoteCreatePosition({
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,

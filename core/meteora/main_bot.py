@@ -97,7 +97,8 @@ class DeltaNeutralSniperBot:
             logging.info(f"Posição aberta na Meteora?: {is_open}")
             if not is_open:
                 return False
-
+            return True
+            """
             # 2. Tenta fazer o hedge na HL
             try:
                 logging.info("A abrir posição na Hyperliquid")
@@ -106,17 +107,18 @@ class DeltaNeutralSniperBot:
             except Exception as e:
                 logging.error(f"❌ Falha no Hedge HL: {e}. AÇÃO NECESSÁRIA: Fechar posição Meteora!")
                 return False
-
+            """
         except Exception as e:
             logging.error(f"❌ Falha ao abrir na Meteora: {e}")
             return False
 
     async def rebalanced_position(self, current_price: float, range_width: float):
         try:
+            """
             # 1. Fechar Hedge na HL (Liberta capital ou encerra exposição)
             logging.info("🔄 Fechando Hedge na Hyperliquid...")
             await self.hl_client.close_position()
-
+            """
             # 2. Rebalancear Meteora
             # Importante: verifica se esta função bloqueia até a transação ser confirmada na blockchain
             logging.info("🔄 Atualizando Posição na Meteora...")
@@ -132,12 +134,13 @@ class DeltaNeutralSniperBot:
             logging.info(f"Posição rebalanceada na Meteora?: {is_rebalanced}")
             if not is_rebalanced:
                 raise RuntimeError("Meteora rebalance failed")
-
+            return True
+            """
             # 3. Reabrir Hedge na HL
             logging.info("🔄 Abrindo novo Hedge na Hyperliquid...")
             await self.hl_client.open_position(usdc_hl_leg)
             return True
-
+            """
         except Exception as e:
             logging.error(f"❌ Erro Crítico no rebalanceamento: {e}")
             return False
@@ -240,18 +243,15 @@ class DeltaNeutralSniperBot:
 
         hl_pnl, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
-        total_pnl = hl_pnl + position_data.pnlUsd
+        # total_pnl = hl_pnl + position_data.pnlUsd
 
         if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
-
             logging.info(f"⚠️ Preço saiu do range. Lado: {status}")
-            if total_pnl >= 0:
-                logging.info(f"⚠️ A tentar recuperar o 0/0")
-                self.out_of_range_since = None  # Limpa qualquer timer pendente
-                return True
+            self.out_of_range_since = None  # Limpa qualquer timer pendente
+            return True
 
-        if total_pnl > (self.total_usdc_capital * 0.0012):
-            logging.info(f"✅ Preço atingiu a meta de 0.2%: {total_pnl:.2f}: {status}")
+        if position_data.pnlUsd > (self.total_usdc_capital * 0.0012):
+            logging.info(f"✅ Preço atingiu a meta de 0.2%: {position_data.pnlUsd:.2f}: {status}")
             return True
 
         # 2. SE VOLTOU PARA DENTRO (Reset do timer)
@@ -288,10 +288,12 @@ class DeltaNeutralSniperBot:
             is_closed_meteora = await self.meteora_client.close_all()
             if is_closed_meteora:
                 logging.info("⏳ Posição de Meteora fechado com sucesso. A Fechar posição da Hyperliquid...")
+                """
                 is_closed_hl = await self.hl_client.close_position()
                 if is_closed_hl:
                     logging.info("✅ Posição de Hyperliquid fechado com sucesso.")
-                    return True
+                """
+                return True
         return False
 
     async def rebalanced_management(self, position: PositionStatus, range_margin_pct=0.005,
