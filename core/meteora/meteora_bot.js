@@ -277,7 +277,7 @@ async function calculateRangeMetrics(currentPrice, rangePercent, skew = 0.5) {
 // =====================================================================
 // 5. CORE EXECUTION FUNCTIONS
 // =====================================================================
-async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
+async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
@@ -329,8 +329,8 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     const totalNeeded = totalXAmount.add(totalRentLamports).add(BUFFER_EXTRA);
 
     // 4. Gas Tracker (Agora com o valor exato calculado)
-    const gasOk = await ensureGasTracker(currentPrice, totalNeeded.toNumber());
-    if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
+    //const gasOk = await ensureGasTracker(currentPrice, totalNeeded.toNumber());
+    //if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
 
     // 5. Balanceamento (Swap se necessário)
 
@@ -389,6 +389,88 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         //totalYAmount: new anchor.BN(Math.floor(totalYAmount.toNumber() * 0.995)),
         totalXAmount: new anchor.BN(Math.floor(totalXAmount.toNumber())),
         totalYAmount: new anchor.BN(Math.floor(totalYAmount.toNumber())),
+        strategy: {
+            minBinId: metrics.activeBinId - metrics.binsOffset,
+            maxBinId: metrics.activeBinId + metrics.binsOffset,
+            strategyType: StrategyType.Curve
+        },
+    });
+
+    if (Array.isArray(tx)) {
+        for (const t of tx) await provider.sendAndConfirm(t, [positionKeypair]);
+    } else {
+        await provider.sendAndConfirm(tx, [positionKeypair]);
+    }
+
+    console.log(`✅ Posição injetada com sucesso!`);
+    return true;
+}
+
+sync function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
+    const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
+    console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
+
+    // 1. Definições de proporção
+    const solPercent = 0.50;
+    const usdcPercent = 1 - solPercent;
+
+    // 2. Obter Metrics
+    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars, solPercent);
+    const quote = await dlmmPool.quoteCreatePosition({
+        strategy: {
+            minBinId: metrics.activeBinId - metrics.binsOffset,
+            maxBinId: metrics.activeBinId + metrics.binsOffset,
+            strategyType: StrategyType.Curve,
+        },
+    });
+
+    // 3. Obter saldos reais e aplicar Reserva de Segurança ($3 USD)
+    const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
+    const solAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(WSOL_MINT) });
+
+    const usdcBalance = usdcAccounts.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
+    const solBalance = solAccounts.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
+    const solNativoBalance = await connection.getBalance(wallet.publicKey) / 1_000_000_000;
+
+    // Lógica de Blindagem: O bot ignora estes $3 USD para trading
+    const GAS_RESERVE_USD = 3.00;
+    const solReserva = GAS_RESERVE_USD / currentPrice;
+    const totalSolBalance = Math.max(0, (solBalance + solNativoBalance) - solReserva);
+
+    // 4. Calcular alvos de balanceamento
+    const currentTotalValue = usdcBalance + (totalSolBalance * currentPrice);
+    const targetUsdc = currentTotalValue * usdcPercent;
+    const diffUsdc = targetUsdc - usdcBalance;
+
+    // 5. Executar Swaps de balanceamento (apenas se necessário)
+    if (Math.abs(diffUsdc) > 1.0) {
+        if (diffUsdc > 0) {
+            const solParaVender = diffUsdc / currentPrice;
+            console.log(`🔄 [Swap] Vendendo SOL para obter $${diffUsdc.toFixed(2)} USDC...`);
+            await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
+        } else {
+            const solParaComprar = Math.abs(diffUsdc) / currentPrice;
+            console.log(`🔄 [Swap] Comprando SOL usando $${Math.abs(diffUsdc).toFixed(2)} USDC...`);
+            await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(Math.abs(diffUsdc) * 1_000_000));
+        }
+        await new Promise(r => setTimeout(r, 5000));
+    }
+
+    // 6. Recalcular quantidades exatas pós-swap para injeção (usando Quote da Meteora)
+    // Usamos o quote do Meteora para garantir que a proporção está perfeita
+    const totalXAmount = new anchor.BN(quote.maxAmountX);
+    const totalYAmount = new anchor.BN(quote.maxAmountY);
+
+    console.log(`⚡ A injetar X:${totalXAmount.toString()} Y:${totalYAmount.toString()}...`);
+    const positionKeypair = Keypair.generate();
+
+    const tx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
+        positionPubKey: positionKeypair.publicKey,
+        user: wallet.publicKey,
+        baseKeyPair: positionKeypair,
+        lbPair: dlmmPool.pubkey,
+        totalXAmount: totalXAmount,
+        totalYAmount: totalYAmount,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
@@ -541,7 +623,7 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
     }
 }
 
-async function getPositionPnL(poolAddress) {
+async function getPositionPnL__(poolAddress) {
         try {
             const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
 
@@ -568,6 +650,31 @@ async function getPositionPnL(poolAddress) {
         }
     }
 
+async function getPositionPnL(poolAddress, positionAddress) {
+    try {
+        // Consultamos a lista de PnL do pool
+        const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
+
+        if (!response.ok) throw new Error(`Erro API PnL: ${response.statusText}`);
+
+        const data = await response.json();
+
+        // Filtra EXATAMENTE pela chave da posição que estás a analisar
+        const targetPosition = data.positions.find(pos => pos.positionAddress === positionAddress);
+
+        if (!targetPosition) {
+            console.log(`⚠️ Posição ${positionAddress} não encontrada na API de PnL.`);
+            return 0;
+        }
+
+        return parseFloat(targetPosition.pnlUsd || 0);
+
+    } catch (error) {
+        console.error("Erro na consulta de PnL:", error);
+        return 0;
+    }
+}
+
 async function getPosition(poolAddress) {
     try {
         const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
@@ -588,6 +695,8 @@ async function getPosition(poolAddress) {
         const lowerBinId = p.positionData.lowerBinId;
         const upperBinId = p.positionData.upperBinId;
 
+        const positionAddress = p.publicKey.toBase58();
+
         // 2. Validação do range
         const inRange = activeBinId >= lowerBinId && activeBinId <= upperBinId;
 
@@ -602,7 +711,7 @@ async function getPosition(poolAddress) {
         const totalXAmount = p.positionData.totalXAmount;
         const totalYAmount = p.positionData.totalYAmount;
 
-        const pnlUsd = await getPositionPnL(poolAddress)
+        const pnlUsd = await getPositionPnL(poolAddress, positionAddress)
 
         console.log(JSON.stringify({
             exists: true,

@@ -250,8 +250,8 @@ class DeltaNeutralSniperBot:
             self.out_of_range_since = None  # Limpa qualquer timer pendente
             return True
 
-        if position_data.pnlUsd > (self.total_usdc_capital * 0.002):
-            logging.info(f"✅ Preço atingiu a meta de 0.2%: {position_data.pnlUsd:.2f}: {status}")
+        if position_data.pnlUsd > (self.total_usdc_capital * 0.004):
+            logging.info(f"✅ Preço atingiu a meta de 0.4%: {position_data.pnlUsd:.2f}: {status}")
             return True
 
         # 2. SE VOLTOU PARA DENTRO (Reset do timer)
@@ -320,8 +320,8 @@ class DeltaNeutralSniperBot:
 
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
-            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width()
-            range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
+            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            # range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
             logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
                                                            range_percentage)
@@ -340,8 +340,8 @@ class DeltaNeutralSniperBot:
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
-            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width()
-            range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
+            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            # range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
             logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
             is_open = await self.open_position(market_status.raw_price, range_percentage)
             position = await self.meteora_client.get_position()
