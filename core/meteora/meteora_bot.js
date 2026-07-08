@@ -333,12 +333,38 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
 
     // 5. Balanceamento (Swap se necessário)
+
+    /**
     const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
     const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
 
     if (Math.abs(usdcBalance - alvoMetadeUsdc) > 0.50) {
         const solParaVender = (alvoMetadeUsdc - usdcBalance) / currentPrice;
         await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
+        await new Promise(r => setTimeout(r, 3000));
+    }
+    **/
+
+    const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
+    const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
+
+    // Usamos o totalUsdcCapitalInjetar (que calculaste no Passo 1) como o alvo
+    if (Math.abs(usdcBalance - totalUsdcCapitalInjetar) > 0.50) {
+
+        const diffUsdc = totalUsdcCapitalInjetar - usdcBalance;
+
+        if (diffUsdc > 0) {
+            // Precisas de mais USDC: Vendes SOL
+            const solParaVender = diffUsdc / currentPrice;
+            console.log(`🔄 [Swap] Vendendo SOL para obter $${diffUsdc.toFixed(2)} USDC...`);
+            await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
+        } else {
+            // Tens USDC a mais: Compras SOL (usa o Math.abs para o valor ser positivo)
+            const solParaComprar = Math.abs(diffUsdc) / currentPrice;
+            console.log(`🔄 [Swap] Comprando SOL usando $${Math.abs(diffUsdc).toFixed(2)} USDC...`);
+            await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(Math.abs(diffUsdc) * 1_000_000));
+        }
+
         await new Promise(r => setTimeout(r, 3000));
     }
 
