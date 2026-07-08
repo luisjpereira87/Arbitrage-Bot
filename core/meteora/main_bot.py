@@ -250,7 +250,7 @@ class DeltaNeutralSniperBot:
             self.out_of_range_since = None  # Limpa qualquer timer pendente
             return True
 
-        if position_data.pnlUsd > (self.total_usdc_capital * 0.0012):
+        if position_data.pnlUsd > (self.total_usdc_capital * 0.002):
             logging.info(f"✅ Preço atingiu a meta de 0.2%: {position_data.pnlUsd:.2f}: {status}")
             return True
 
