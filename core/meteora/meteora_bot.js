@@ -292,8 +292,8 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     **/
 
     // 1. Calcular o capital de injeção (30% SOL / 70% USDC)
-    const solPercent = 0.30;
-    const usdcPercent = 0.70;
+    const solPercent = 0.50;
+    const usdcPercent = 1 - solPercent;
 
     const totalSolCapital = totalUsdcCapital * solPercent; // Valor em USD do SOL que queres
     const totalUsdcCapitalInjetar = totalUsdcCapital * usdcPercent; // Valor em USD do USDC que queres
@@ -305,7 +305,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     const totalYAmount = new anchor.BN(Math.floor(totalUsdcCapitalInjetar * 1_000_000));
 
     // 2. Obter Metrics e Quote
-    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars, 0.3);
+    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars, solPercent);
     const quote = await dlmmPool.quoteCreatePosition({
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
@@ -355,7 +355,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     const totalSolBalance = solBalance + solNativoBalance;
     const currentTotalValue = usdcBalance + (totalSolBalance * currentPrice);
 
-    const targetUsdc = currentTotalValue * 0.70;
+    const targetUsdc = currentTotalValue * usdcPercent;
 
     // A diferença real para atingir o alvo de 70% USDC
     const diffUsdc = targetUsdc - usdcBalance;
@@ -378,6 +378,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     // 6. Injeção
     console.log(`⚡ A injetar X:${totalXAmount.toString()} Y:${totalYAmount.toString()}...`);
     const positionKeypair = Keypair.generate();
+
 
     const tx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
         positionPubKey: positionKeypair.publicKey,

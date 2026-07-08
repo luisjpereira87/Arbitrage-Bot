@@ -241,7 +241,7 @@ class DeltaNeutralSniperBot:
             return True
         """
 
-        hl_pnl, _ = await self.hl_client.get_balance()
+        # hl_pnl, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
         # total_pnl = hl_pnl + position_data.pnlUsd
 
