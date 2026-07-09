@@ -716,6 +716,7 @@ async function handleAction(promise, poolAddress, successStatus) {
     try {
         await promise;
         // Tenta limpar, mas não deixa o sucesso da operação depender da limpeza
+        await new Promise(resolve => setTimeout(resolve, 5000));
         try {
             const success = await cleanupAndSettle(poolAddress, 3.0);
 
