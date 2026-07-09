@@ -310,7 +310,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Curve,
+            strategyType: StrategyType.Spot,
         },
     });
 
@@ -392,89 +392,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Curve
-        },
-    });
-
-    if (Array.isArray(tx)) {
-        for (const t of tx) await provider.sendAndConfirm(t, [positionKeypair]);
-    } else {
-        await provider.sendAndConfirm(tx, [positionKeypair]);
-    }
-
-    console.log(`✅ Posição injetada com sucesso!`);
-    return true;
-}
-
-async function openBalancedPosition__(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
-    const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
-    console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
-
-    // 1. Definições de proporção
-    const solPercent = 0.50;
-    const usdcPercent = 1 - solPercent;
-
-    // 2. Obter Metrics
-    const metrics = await calculateRangeMetrics(currentPrice, rangeWidthDollars, solPercent);
-    const quote = await dlmmPool.quoteCreatePosition({
-        strategy: {
-            minBinId: metrics.activeBinId - metrics.binsOffset,
-            maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Curve,
-        },
-    });
-
-    // 3. Obter saldos reais e aplicar Reserva de Segurança ($3 USD)
-    const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
-    const solAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(WSOL_MINT) });
-
-    const usdcBalance = usdcAccounts.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
-    const solBalance = solAccounts.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
-    const solNativoBalance = await connection.getBalance(wallet.publicKey) / 1_000_000_000;
-
-    // Lógica de Blindagem: O bot ignora estes $3 USD para trading
-    const GAS_RESERVE_USD = 3.00;
-    const solReserva = GAS_RESERVE_USD / currentPrice;
-    const totalSolBalance = Math.max(0, (solBalance + solNativoBalance) - solReserva);
-
-    // 4. Calcular alvos de balanceamento
-    const currentTotalValue = usdcBalance + (totalSolBalance * currentPrice);
-    const targetUsdc = currentTotalValue * usdcPercent;
-    const diffUsdc = targetUsdc - usdcBalance;
-
-    // 5. Executar Swaps de balanceamento (apenas se necessário)
-    if (Math.abs(diffUsdc) > 1.0) {
-        if (diffUsdc > 0) {
-            const solParaVender = diffUsdc / currentPrice;
-            console.log(`🔄 [Swap] Vendendo SOL para obter $${diffUsdc.toFixed(2)} USDC...`);
-            await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
-        } else {
-            const solParaComprar = Math.abs(diffUsdc) / currentPrice;
-            console.log(`🔄 [Swap] Comprando SOL usando $${Math.abs(diffUsdc).toFixed(2)} USDC...`);
-            await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(Math.abs(diffUsdc) * 1_000_000));
-        }
-        await new Promise(r => setTimeout(r, 5000));
-    }
-
-    // 6. Recalcular quantidades exatas pós-swap para injeção (usando Quote da Meteora)
-    // Usamos o quote do Meteora para garantir que a proporção está perfeita
-    const totalXAmount = new anchor.BN(quote.maxAmountX);
-    const totalYAmount = new anchor.BN(quote.maxAmountY);
-
-    console.log(`⚡ A injetar X:${totalXAmount.toString()} Y:${totalYAmount.toString()}...`);
-    const positionKeypair = Keypair.generate();
-
-    const tx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
-        positionPubKey: positionKeypair.publicKey,
-        user: wallet.publicKey,
-        baseKeyPair: positionKeypair,
-        lbPair: dlmmPool.pubkey,
-        totalXAmount: totalXAmount,
-        totalYAmount: totalYAmount,
-        strategy: {
-            minBinId: metrics.activeBinId - metrics.binsOffset,
-            maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Curve
+            strategyType: StrategyType.Spot
         },
     });
 
@@ -535,7 +453,7 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     }
 
     console.log(`✅ Liquidez removida. Aguardando confirmação...`);
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    //await new Promise(resolve => setTimeout(resolve, 5000));
 
     /**
     const success = await cleanupAndSettle(poolAddress, 3.0);

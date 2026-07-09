@@ -76,6 +76,8 @@ class DeltaNeutralSniperBot:
         self.last_known_range = 0.0
         self.last_calculation_time = 0
 
+        self.lookback_range = 21
+
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
 
         capital_para_hedge = self.total_usdc_capital / 2
@@ -97,8 +99,6 @@ class DeltaNeutralSniperBot:
             logging.info(f"Posição aberta na Meteora?: {is_open}")
             if not is_open:
                 return False
-            return True
-            """
             # 2. Tenta fazer o hedge na HL
             try:
                 logging.info("A abrir posição na Hyperliquid")
@@ -107,18 +107,18 @@ class DeltaNeutralSniperBot:
             except Exception as e:
                 logging.error(f"❌ Falha no Hedge HL: {e}. AÇÃO NECESSÁRIA: Fechar posição Meteora!")
                 return False
-            """
+
         except Exception as e:
             logging.error(f"❌ Falha ao abrir na Meteora: {e}")
             return False
 
     async def rebalanced_position(self, current_price: float, range_width: float):
         try:
-            """
+
             # 1. Fechar Hedge na HL (Liberta capital ou encerra exposição)
             logging.info("🔄 Fechando Hedge na Hyperliquid...")
             await self.hl_client.close_position()
-            """
+
             # 2. Rebalancear Meteora
             # Importante: verifica se esta função bloqueia até a transação ser confirmada na blockchain
             logging.info("🔄 Atualizando Posição na Meteora...")
@@ -134,13 +134,12 @@ class DeltaNeutralSniperBot:
             logging.info(f"Posição rebalanceada na Meteora?: {is_rebalanced}")
             if not is_rebalanced:
                 raise RuntimeError("Meteora rebalance failed")
-            return True
-            """
+
             # 3. Reabrir Hedge na HL
             logging.info("🔄 Abrindo novo Hedge na Hyperliquid...")
             await self.hl_client.open_position(usdc_hl_leg)
             return True
-            """
+
         except Exception as e:
             logging.error(f"❌ Erro Crítico no rebalanceamento: {e}")
             return False
@@ -241,6 +240,7 @@ class DeltaNeutralSniperBot:
             return True
         """
 
+        """
         # hl_pnl, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
         # total_pnl = hl_pnl + position_data.pnlUsd
@@ -249,11 +249,12 @@ class DeltaNeutralSniperBot:
             logging.info(f"⚠️ Preço saiu do range. Lado: {status}")
             self.out_of_range_since = None  # Limpa qualquer timer pendente
             return True
-
+        """
+        """
         if position_data.pnlUsd > (self.total_usdc_capital * 0.004):
             logging.info(f"✅ Preço atingiu a meta de 0.4%: {position_data.pnlUsd:.2f}: {status}")
             return True
-
+        """
         # 2. SE VOLTOU PARA DENTRO (Reset do timer)
         if status == RangeStatus.INSIDE:
             if self.out_of_range_since is not None:
@@ -261,9 +262,8 @@ class DeltaNeutralSniperBot:
                 self.out_of_range_since = None
             return False
 
-        """
         # 3. SE ESTÁ OUT_LOWER (Lógica de espera com feedback)
-        if status == RangeStatus.OUT_LOWER:
+        if status == RangeStatus.OUT_LOWER or status == RangeStatus.OUT_UPPER:
             # Inicia timer se for a primeira vez
             if self.out_of_range_since is None:
                 self.out_of_range_since = time.time()
@@ -280,7 +280,6 @@ class DeltaNeutralSniperBot:
             if time.time() - getattr(self, 'last_log_time', 0) > 20:
                 logging.info(f"⏳ Aguardando... Abaixo do range há {elapsed:.0f}s de {duration_seconds}s.")
                 self.last_log_time = time.time()
-        """
         return False
 
     async def close_position(self, position: PositionStatus) -> bool:
@@ -288,16 +287,14 @@ class DeltaNeutralSniperBot:
             is_closed_meteora = await self.meteora_client.close_all()
             if is_closed_meteora:
                 logging.info("⏳ Posição de Meteora fechado com sucesso. A Fechar posição da Hyperliquid...")
-                """
+
                 is_closed_hl = await self.hl_client.close_position()
                 if is_closed_hl:
                     logging.info("✅ Posição de Hyperliquid fechado com sucesso.")
-                """
                 return True
         return False
 
-    async def rebalanced_management(self, position: PositionStatus, range_margin_pct=0.005,
-                                    reserve_sol_usdc=10.0) -> PositionStatus | None:
+    async def rebalanced_management(self, position: PositionStatus, range_margin_pct=0.005) -> PositionStatus | None:
 
         if position is None or position.size != 1:
             return position
@@ -320,7 +317,7 @@ class DeltaNeutralSniperBot:
 
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             # range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
             logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
@@ -329,24 +326,19 @@ class DeltaNeutralSniperBot:
             if is_rebalanced:
                 self.out_of_range_since = None
                 position = await self.meteora_client.get_position()
-                # await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
             else:
                 logging.error("Meteora rebalance failed")
-            # await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
         return position
 
-    async def open_position_management(self, position: PositionStatus | None, range_margin_pct=0.005,
-                                       reserve_sol_usdc=10.0) -> PositionStatus | None:
+    async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
-            range_percentage = await self.hl_client.calculate_dynamic_range_width()
+            range_percentage = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             # range_percentage = range_percentage_raw * (1 + (range_margin_pct * 2))
             logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
-            is_open = await self.open_position(market_status.raw_price, range_percentage)
+            await self.open_position(market_status.raw_price, range_percentage)
             position = await self.meteora_client.get_position()
-            # if is_open:
-            # await self.solana_executor.cleanup_wallet(reserve_sol_usdc=reserve_sol_usdc)
         return position
 
     async def heartbeat_log(self, last_heartbeat: float, heartbeat_interval: int):
@@ -375,13 +367,13 @@ class DeltaNeutralSniperBot:
         e False se estiver apto para operar.
         """
         current_time = time.time()
-        MAX_RANGE_PCT = 0.02
+        MAX_RANGE_PCT = 0.03
         CALC_INTERVAL = 100
         COOLDOWN_DURATION = 300
 
         # Verifica se precisamos de atualizar o range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
-            self.last_known_range = await self.hl_client.calculate_dynamic_range_width()
+            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             self.last_calculation_time = current_time
 
         # Verifica se o range é abusivo
@@ -392,7 +384,7 @@ class DeltaNeutralSniperBot:
             else:
                 # Acabou de entrar em volatilidade
                 self.cooldown_until = current_time + COOLDOWN_DURATION
-                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > 2%. Cooldown ativo.")
+                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {(MAX_RANGE_PCT * 100):.2%}. Cooldown ativo.")
                 return True
 
         # Mercado está estável
@@ -403,20 +395,16 @@ class DeltaNeutralSniperBot:
         await asyncio.sleep(2)
 
         margin_percentage = 0.1
-        reserve_sol_usdc = 3.0
-
         heartbeat_interval = 120
         last_heartbeat = time.time()
 
         position_data = await self.meteora_client.get_position()
-        # balance = await self.get_balance(position_data)
         while True:
             try:
 
                 if position_data is None:
                     if not await self.should_wait_for_market():
-                        position_data = await self.open_position_management(position_data, margin_percentage,
-                                                                            reserve_sol_usdc)
+                        position_data = await self.open_position_management(position_data)
                     else:
                         await asyncio.sleep(10)  # Descanso profundo
                     continue
@@ -425,8 +413,7 @@ class DeltaNeutralSniperBot:
                     if is_closed:
                         position_data = None
                         continue
-                position_data = await self.rebalanced_management(position_data, margin_percentage,
-                                                                 reserve_sol_usdc)
+                position_data = await self.rebalanced_management(position_data, margin_percentage)
                 last_heartbeat = await self.heartbeat_log(last_heartbeat, heartbeat_interval)
 
                 await asyncio.sleep(5)
