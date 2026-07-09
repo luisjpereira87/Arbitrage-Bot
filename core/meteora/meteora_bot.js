@@ -733,25 +733,51 @@ async function handleAction(promise, poolAddress, successStatus) {
     }
 }
 
+async function handleActionSimple(promise, successStatus = "SUCCESS") {
+    try {
+        await promise;
+        console.log(JSON.stringify({ status: successStatus }));
+        process.exit(0);
+    } catch (err) {
+        console.error(JSON.stringify({ status: "ERROR", message: err.message }));
+        process.exit(1);
+    }
+}
+
 if (command === "open") {
     handleAction(openBalancedPosition(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_OPEN_BALANCE_POSITION");
 } else if (command === "close") {
     handleAction(closeAllPoolPositionsAndSettle(args[1]), args[1], "SUCCESS_CLOSE_ALL");
 } else if (command === "status") {
-    const poolAddress = args[1];
-    await getMarketStatus(poolAddress);
-    process.exit(0);
+    //handleActionSimple(getMarketStatus(args[1]), "SUCCESS_STATUS")
+    //const poolAddress = args[1];
+    //getMarketStatus(poolAddress);
+    //process.exit(0);
+    (async () => {
+        await getMarketStatus(args[1]);
+        process.exit(0);
+    })();
 } else if (command === "rebalance") {
     handleAction(rebalancePositionByStrategy(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_REBALANCE_POSITION");
 } else if (command === "get_position") {
-    const poolAddress = args[1];
-    await getPosition(poolAddress);
-    process.exit(0);
+    //handleActionSimple(getPosition(args[1]), "SUCCESS_GET_POSITION")
+    //const poolAddress = args[1];
+    //getPosition(poolAddress);
+    //process.exit(0);
+    (async () => {
+        await getPosition(args[1]);
+        process.exit(0);
+    })();
 } else if (command === "calculate") {
-    const currentPrice = parseFloat(args[1]);
-    const rangeWidthDollars = parseFloat(args[2]);
-    await calculateRangeMetrics(currentPrice, rangeWidthDollars);
-    process.exit(0);
+    //handleActionSimple(calculateRangeMetrics(parseFloat(args[1]), parseFloat(args[2])), "SUCCESS_CALCULATE")
+    //const currentPrice = parseFloat(args[1]);
+    //const rangeWidthDollars = parseFloat(args[2]);
+    //calculateRangeMetrics(currentPrice, rangeWidthDollars);
+    //process.exit(0);
+    (async () => {
+        await calculateRangeMetrics(parseFloat(args[1]), parseFloat(args[2]));
+        process.exit(0);
+    })();
 } else {
     console.log(JSON.stringify({ status: "ERROR", message: "Comando inválido. Usa 'open', 'close', 'status' ou 'rebalance'." }));
     process.exit(1);
