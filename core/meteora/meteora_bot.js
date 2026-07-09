@@ -537,12 +537,13 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     console.log(`✅ Liquidez removida. Aguardando confirmação...`);
     await new Promise(resolve => setTimeout(resolve, 5000));
 
+    /**
     const success = await cleanupAndSettle(poolAddress, 3.0);
 
     if (success) {
         console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
     }
-
+    **/
     // ... (resto do teu código de liquidação de SOL permanece igual)
     //endScript("SUCCESS_CLOSE_ALL");
     return true;
@@ -622,33 +623,6 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
         throw error; // O router irá apanhar isto e imprimir o status: ERROR
     }
 }
-
-async function getPositionPnL__(poolAddress) {
-        try {
-            const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
-
-            if (!response.ok) {
-                throw new Error(`Erro ao obter PnL: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-
-            if (!data.positions || !Array.isArray(data.positions)) {
-                return 0;
-            }
-
-            // Filtra apenas posições ativas e soma o PnL em USD
-            const totalPnLUsd = data.positions
-                .filter(pos => !pos.isClosed)
-                .reduce((sum, pos) => sum + parseFloat(pos.pnlUsd || 0), 0);
-
-            return totalPnLUsd;
-
-        } catch (error) {
-            console.error("Erro na consulta de PnL Meteora:", error);
-            return null;
-        }
-    }
 
 async function getPositionPnL(poolAddress, positionAddress) {
     try {
@@ -738,69 +712,46 @@ async function getPosition(poolAddress) {
 const args = process.argv.slice(2);
 const command = args[0];
 
+async function handleAction(promise, poolAddress, successStatus) {
+    try {
+        await promise;
+        // Tenta limpar, mas não deixa o sucesso da operação depender da limpeza
+        try {
+            const success = await cleanupAndSettle(poolAddress, 3.0);
+
+            if (success) {
+                console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
+            }
+        } catch (cleanupErr) {
+            console.error(JSON.stringify({ status: "WARNING_CLEANUP_FAILED", message: cleanupErr.message }));
+        }
+        console.log(JSON.stringify({ status: successStatus }));
+        process.exit(0);
+    } catch (err) {
+        console.error(JSON.stringify({ status: "ERROR", message: err.message }));
+        process.exit(1);
+    }
+}
+
 if (command === "open") {
-    const poolAddress = args[1];
-    const totalUsdc = parseFloat(args[2]);
-    const currentPrice = parseFloat(args[3]);
-    const rangeWidth = parseFloat(args[4]);
-    //openBalancedPosition(totalUsdc, currentPrice, rangeWidth);
-
-    openBalancedPosition(poolAddress, totalUsdc, currentPrice, rangeWidth)
-        .then(() => {
-            // Apenas aqui garantes que tudo terminou e envias o status final
-            console.log(JSON.stringify({ status: "SUCCESS_OPEN_BALANCE_POSITION" }));
-            process.exit(0);
-        })
-        .catch((error) => {
-            // Se a função lançou um erro, capturamos aqui
-            console.error(JSON.stringify({ status: "ERROR", message: error.message }));
-            process.exit(1);
-        });
-
+    handleAction(openBalancedPosition(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_OPEN_BALANCE_POSITION");
 } else if (command === "close") {
-    const poolAddress = args[1];
-    closeAllPoolPositionsAndSettle(poolAddress)
-        .then(() => {
-            // Apenas aqui garantes que tudo terminou e envias o status final
-            console.log(JSON.stringify({ status: "SUCCESS_CLOSE_ALL" }));
-            process.exit(0);
-        })
-        .catch((error) => {
-            // Se a função lançou um erro, capturamos aqui
-            console.error(JSON.stringify({ status: "ERROR", message: error.message }));
-            process.exit(1);
-        });
-    //closeAllPoolPositionsAndSettle();
+    handleAction(closeAllPoolPositionsAndSettle(args[1]), args[1], "SUCCESS_CLOSE_ALL");
 } else if (command === "status") {
     const poolAddress = args[1];
-    getMarketStatus(poolAddress);
+    await getMarketStatus(poolAddress);
+    process.exit(0);
 } else if (command === "rebalance") {
-    const poolAddress = args[1];
-    const totalUsdc = parseFloat(args[2]);
-    const currentPrice = parseFloat(args[3]);
-    const rangeWidth = parseFloat(args[4]);
-    rebalancePositionByStrategy(poolAddress, totalUsdc, currentPrice, rangeWidth)
-        .then(() => {
-            // Apenas aqui garantes que tudo terminou e envias o status final
-            console.log(JSON.stringify({ status: "SUCCESS_REBALANCE_POSITION" }));
-            process.exit(0);
-        })
-        .catch((error) => {
-            // Se a função lançou um erro, capturamos aqui
-            console.error(JSON.stringify({ status: "ERROR", message: error.message }));
-            process.exit(1);
-        });
+    handleAction(rebalancePositionByStrategy(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_REBALANCE_POSITION");
 } else if (command === "get_position") {
     const poolAddress = args[1];
-    getPosition(poolAddress);
-} else if (command === "get_pnl") {
-    console.log("AQUI")
-    const poolAddress = args[1];
-    getPositionPnL(poolAddress);
+    await getPosition(poolAddress);
+    process.exit(0);
 } else if (command === "calculate") {
     const currentPrice = parseFloat(args[1]);
     const rangeWidthDollars = parseFloat(args[2]);
-    calculateRangeMetrics(currentPrice, rangeWidthDollars);
+    await calculateRangeMetrics(currentPrice, rangeWidthDollars);
+    process.exit(0);
 } else {
     console.log(JSON.stringify({ status: "ERROR", message: "Comando inválido. Usa 'open', 'close', 'status' ou 'rebalance'." }));
     process.exit(1);

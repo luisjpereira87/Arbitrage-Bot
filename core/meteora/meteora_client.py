@@ -22,8 +22,8 @@ class MeteoraClient:
             # Lê o output e espera o processo acabar, mas de forma mais direta
             stdout, stderr = await process.communicate()
 
-            print(stdout.decode())
-            print(stderr.decode())
+            # print(stdout.decode())
+            # print(stderr.decode())
             # Se o Node.js estiver a enviar logs inúteis, isso pode estar a atrasar.
             # Garante que só tens o JSON na saída.
             return self.extract_json_response(stdout.decode())
@@ -82,11 +82,6 @@ class MeteoraClient:
             "pnlUsd": float(data.get("pnlUsd", 0.0)),
         }
         return PositionStatus(**status_data)
-
-    async def get_position_pnl(self):
-        data = await self._execute_async(["get_pnl", self.pool_config.address])
-        print(data)
-        return True
 
     async def open_position(self, usdc: float, price: float, width: float):
         data = await self._execute_async(["open", self.pool_config.address, str(usdc), str(price), str(width)])
