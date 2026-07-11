@@ -140,3 +140,20 @@ class HlClient:
     async def adjust_balance(self, capital_amount: float, dex_price: float) -> tuple[
         float, float]:
         return await self.hl_exchange.get_perfect_quantities(capital_amount, dex_price, self.symbol)
+
+    async def is_market_turbulent(self, threshold=0.005):
+        # Obtém o dataframe
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=1)
+
+        # Extraímos o valor usando .iloc[-1] (a última linha)
+        # Isto garante que obténs o valor bruto (float) e não uma Series com índice
+        high = float(ohlcv['high'].iloc[-1])
+        low = float(ohlcv['low'].iloc[-1])
+
+        amplitude = (high - low) / low
+
+        is_turbulent = amplitude > threshold
+
+        print(f"🔍 [Market Check] Amplitude: {amplitude:.6f} | Turbulento: {is_turbulent}")
+
+        return is_turbulent
