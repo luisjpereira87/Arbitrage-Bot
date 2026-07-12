@@ -232,6 +232,49 @@ class DeltaNeutralSniperBot:
 
         status = await self.hl_client.check_range_status(min_price, max_price, margin_percent)
 
+        # Check de turbulência (novo)
+        is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
+
+        # 1. SE SAIU DO RANGE
+        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
+
+            # AÇÃO IMEDIATA: Se estiver fora DO RANGE E o mercado estiver TURBULENTO,
+            # não esperes os 300 segundos. Sai já!
+            if is_turbulent:
+                logging.warning(f"🚨 SPIKE/TURBULÊNCIA + FORA DO RANGE ({status}). Fecho imediato!")
+                self.out_of_range_since = None
+                return True
+
+            # Caso contrário, mantém o comportamento normal de esperar o timer
+            if self.out_of_range_since is None:
+                self.out_of_range_since = time.time()
+                logging.info(f"⚠️ Preço {status}. Iniciando timer de {duration_seconds / 60} min...")
+                return False
+
+            elapsed = time.time() - self.out_of_range_since
+            if elapsed >= duration_seconds:
+                logging.info(f"🚨 Tempo sustentado atingido. Rebalanceamento autorizado!")
+                return True
+
+            return False
+
+        # 2. SE VOLTOU PARA DENTRO
+        if status == RangeStatus.INSIDE:
+            if self.out_of_range_since is not None:
+                logging.info("✅ Preço voltou para dentro. Timer resetado.")
+                self.out_of_range_since = None
+            return False
+
+        return False
+
+    async def is_price_outside_range_sustained__(self, min_price: float, max_price: float,
+                                                 margin_percent: float = 0.0,
+                                                 duration_seconds: int = 300) -> bool:
+
+        status = await self.hl_client.check_range_status(min_price, max_price, margin_percent)
+
+        is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
+
         # 1. AÇÃO IMEDIATA: Spike de alta (Ignora timer)
         """
         if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
@@ -371,6 +414,12 @@ class DeltaNeutralSniperBot:
         MAX_RANGE_PCT = 0.03
         CALC_INTERVAL = 100
         COOLDOWN_DURATION = 300
+        TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
+
+        if await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD):
+            self.cooldown_until = current_time + 60  # Cooldown curto de 1min para turbulência
+            logging.warning("⚠️ Mercado turbulento detetado (Amplitude elevada). Pausando.")
+            return True
 
         # Verifica se precisamos de atualizar o range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:

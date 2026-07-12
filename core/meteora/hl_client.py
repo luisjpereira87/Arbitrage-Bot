@@ -154,6 +154,6 @@ class HlClient:
 
         is_turbulent = amplitude > threshold
 
-        print(f"🔍 [Market Check] Amplitude: {amplitude:.6f} | Turbulento: {is_turbulent}")
+        # print(f"🔍 [Market Check] Amplitude: {amplitude:.6f} | Turbulento: {is_turbulent}")
 
         return is_turbulent
