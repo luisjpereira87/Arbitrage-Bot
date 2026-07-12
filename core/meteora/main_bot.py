@@ -256,6 +256,11 @@ class DeltaNeutralSniperBot:
                 logging.info(f"🚨 Tempo sustentado atingido. Rebalanceamento autorizado!")
                 return True
 
+            # Log periódico para não inundar a consola (a cada 20 segundos)
+            if time.time() - getattr(self, 'last_log_time', 0) > 20:
+                logging.info(f"⏳ Aguardando... Abaixo do range há {elapsed:.0f}s de {duration_seconds}s.")
+                self.last_log_time = time.time()
+
             return False
 
         # 2. SE VOLTOU PARA DENTRO
