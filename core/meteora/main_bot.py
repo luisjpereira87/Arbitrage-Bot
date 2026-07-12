@@ -434,7 +434,7 @@ class DeltaNeutralSniperBot:
             else:
                 # Acabou de entrar em volatilidade
                 self.cooldown_until = current_time + COOLDOWN_DURATION
-                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {(MAX_RANGE_PCT * 100):.2%}. Cooldown ativo.")
+                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {MAX_RANGE_PCT:.2%}. Cooldown ativo.")
                 return True
 
         # Mercado está estável
