@@ -140,7 +140,7 @@ async function ensureGasTracker(currentPrice, totalNeededLamports) {
     }
 }
 
-async function (poolAddress, reserveUsdAmount = 3.0) {
+async function cleanupAndSettle(poolAddress, reserveUsdAmount = 3.0) {
     try {
         console.log(`🧹 [Cleaner] Iniciando consolidação (Reserva: $${reserveUsdAmount} USD)...`);
 
