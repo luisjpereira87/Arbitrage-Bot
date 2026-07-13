@@ -410,7 +410,7 @@ class DeltaNeutralSniperBot:
             if position_data:
                 wallet_balance = await self.get_balance(position_data)
                 hl_pnl, hl_balance = await self.hl_client.get_balance()
-                is_turbulent = await self.hl_client.is_market_turbulent()
+                # is_turbulent = await self.hl_client.is_market_turbulent()
                 msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Pnl: [Meteora: {position_data.pnlUsd:.2f}, Hyperliquid: {hl_pnl:.2f}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
             else:
                 msg += " | Sem posição ativa."

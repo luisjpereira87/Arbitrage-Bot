@@ -544,6 +544,41 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
 
 async function getPositionPnL(poolAddress, positionAddress) {
     try {
+        const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
+        await dlmmPool.refetchStates();
+
+        // 1. Preço atual do bin na Meteora
+        const activeBin = await dlmmPool.getActiveBin();
+        const precoMeteora = dlmmPool.fromPricePerLamport(parseFloat(activeBin.price));
+
+        // 2. Consulta os dados da posição
+        const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
+        const data = await response.json();
+        const targetPosition = data.positions.find(pos => pos.positionAddress === positionAddress);
+
+        if (!targetPosition) return 0;
+
+        // 3. Extrai saldos e TAXAS
+        const balanceX = parseFloat(targetPosition.unrealizedPnl.balanceTokenX.amount);
+        const balanceY = parseFloat(targetPosition.unrealizedPnl.balanceTokenY.amount);
+        const feeX = parseFloat(targetPosition.unrealizedPnl.unclaimedFeeTokenX.amount);
+        const feeY = parseFloat(targetPosition.unrealizedPnl.unclaimedFeeTokenY.amount);
+        const depositUsd = parseFloat(targetPosition.allTimeDeposits.total.usd);
+
+        // 4. Calcula o valor atual somando os saldos E as taxas
+        // Convertemos as taxas de X para USD usando o mesmo precoMeteora
+        const valorAtual = ((balanceX + feeX) * precoMeteora) + (balanceY + feeY);
+
+        return valorAtual - depositUsd;
+
+    } catch (error) {
+        console.error("Erro ao calcular PnL com taxas:", error);
+        return 0;
+    }
+}
+
+async function getPositionPnL__(poolAddress, positionAddress) {
+    try {
         // Consultamos a lista de PnL do pool
         const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
 
