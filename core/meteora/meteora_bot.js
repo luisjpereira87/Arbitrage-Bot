@@ -140,7 +140,7 @@ async function ensureGasTracker(currentPrice, totalNeededLamports) {
     }
 }
 
-async function cleanupAndSettle(poolAddress, reserveUsdAmount = 3.0) {
+async function (poolAddress, reserveUsdAmount = 3.0) {
     try {
         console.log(`🧹 [Cleaner] Iniciando consolidação (Reserva: $${reserveUsdAmount} USD)...`);
 
@@ -456,7 +456,7 @@ async function closeAllPoolPositionsAndSettle(poolAddress) {
     //await new Promise(resolve => setTimeout(resolve, 5000));
 
     /**
-    const success = await cleanupAndSettle(poolAddress, 3.0);
+    const success = await (poolAddress, 3.0);
 
     if (success) {
         console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
@@ -636,7 +636,7 @@ async function handleAction(promise, poolAddress, successStatus) {
         // Tenta limpar, mas não deixa o sucesso da operação depender da limpeza
         await new Promise(resolve => setTimeout(resolve, 5000));
         try {
-            const success = await cleanupAndSettle(poolAddress, 3.0);
+            const success = await cleanupAndSettle(poolAddress, 0.0);
 
             if (success) {
                 console.log("🎉 Ciclo de fecho e liquidação finalizado com sucesso.");
