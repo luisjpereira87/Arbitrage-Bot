@@ -230,6 +230,15 @@ class DeltaNeutralSniperBot:
                                                margin_percent: float = 0.0,
                                                duration_seconds: int = 300) -> bool:
 
+        hl_pnl, _ = await self.hl_client.get_balance()
+        position_data = await self.meteora_client.get_position()
+        total_pnl = hl_pnl + position_data.pnlUsd
+        PROFIT_TARGET = self.total_usdc_capital * 0.004
+
+        if total_pnl >= PROFIT_TARGET:
+            logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
+            return True
+
         status = await self.hl_client.check_range_status(min_price, max_price, margin_percent)
 
         # Check de turbulência (novo)
@@ -240,7 +249,7 @@ class DeltaNeutralSniperBot:
 
             # AÇÃO IMEDIATA: Se estiver fora DO RANGE E o mercado estiver TURBULENTO,
             # não esperes os 300 segundos. Sai já!
-            if is_turbulent:
+            if is_turbulent and total_pnl < 0:
                 logging.warning(f"🚨 SPIKE/TURBULÊNCIA + FORA DO RANGE ({status}). Fecho imediato!")
                 self.out_of_range_since = None
                 return True
