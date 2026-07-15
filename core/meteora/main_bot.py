@@ -244,13 +244,25 @@ class DeltaNeutralSniperBot:
         # Check de turbulência (novo)
         is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
 
+        if is_turbulent and total_pnl > 0:
+            logging.warning(f"🚨 SPIKE/TURBULÊNCIA + FORA DO RANGE ({status}). Fecho imediato!")
+            self.out_of_range_since = None
+            return True
+
         # 1. SE SAIU DO RANGE
         if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
 
+            """
             # AÇÃO IMEDIATA: Se estiver fora DO RANGE E o mercado estiver TURBULENTO,
             # não esperes os 300 segundos. Sai já!
             if is_turbulent and total_pnl < 0:
                 logging.warning(f"🚨 SPIKE/TURBULÊNCIA + FORA DO RANGE ({status}). Fecho imediato!")
+                self.out_of_range_since = None
+                return True
+            """
+
+            if total_pnl > 0:
+                logging.warning(f"🚨 Preço fora do range mas pnl positivo: {total_pnl:.2f}, fechp imediato...")
                 self.out_of_range_since = None
                 return True
 
