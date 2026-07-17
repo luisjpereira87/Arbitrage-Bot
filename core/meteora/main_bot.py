@@ -234,7 +234,7 @@ class DeltaNeutralSniperBot:
     async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
                                                    duration_seconds: int = 300) -> bool:
 
-        hl_pnl, _ = await self.hl_client.get_balance()
+        hl_pnl, _, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
         total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
         PROFIT_TARGET = self.total_usdc_capital * 0.004
@@ -407,7 +407,7 @@ class DeltaNeutralSniperBot:
                 logging.error("Meteora rebalance failed")
         return position
 
-    async def open_position_management(self) -> PositionStatus | None:
+    async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
         meteora_position = await self.meteora_client.get_position()
         hl_position = await self.hl_client.get_position()
 
@@ -432,7 +432,7 @@ class DeltaNeutralSniperBot:
             msg = f"💚 [SINAL DE VIDA] {formated_time}"
             if position_data:
                 wallet_balance = await self.get_balance(position_data)
-                hl_pnl, hl_balance = await self.hl_client.get_balance()
+                hl_pnl, hl_balance, _ = await self.hl_client.get_balance()
                 total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
                 # is_turbulent = await self.hl_client.is_market_turbulent()
                 msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Pnl: [Meteora: {position_data.pnlUsd:.2f}, Hyperliquid: {hl_pnl:.2f}, Total: {total_pnl:.2f}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
@@ -492,7 +492,7 @@ class DeltaNeutralSniperBot:
 
                 if position_data is None:
                     if not await self.should_wait_for_market():
-                        position_data = await self.open_position_management()
+                        position_data = await self.open_position_management(position_data)
                     else:
                         await asyncio.sleep(10)  # Descanso profundo
                     continue
