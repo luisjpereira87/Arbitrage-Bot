@@ -77,7 +77,7 @@ class DeltaNeutralSniperBot:
         self.last_calculation_time = 0
 
         self.lookback_range = 21
-        self.range_margin_pct = 0.1
+        self.range_margin_pct = 0.2
 
         slippage_buffer = 0.0002
         fee_rate = 0.00025 + slippage_buffer
@@ -383,7 +383,7 @@ class DeltaNeutralSniperBot:
         e False se estiver apto para operar.
         """
         current_time = time.time()
-        MAX_RANGE_PCT = 0.03
+        MAX_RANGE_PCT = 0.02
         CALC_INTERVAL = 100
         COOLDOWN_DURATION = 300
         TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
