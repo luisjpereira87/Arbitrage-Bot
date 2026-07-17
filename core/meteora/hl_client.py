@@ -124,14 +124,16 @@ class HlClient:
 
         return RangeStatus.INSIDE
 
-    async def get_balance(self) -> tuple[float | None, float]:
+    async def get_balance(self) -> tuple[float | None, float, bool]:
         position = await self.hl_exchange.get_open_position(self.symbol)
         balance = await self.hl_exchange.get_available_balance()
         unrealized_pnl = 0.0
+        is_position = False
         if position:
             unrealized_pnl = position.unrealizedPnl
+            is_position = True
 
-        return unrealized_pnl, balance
+        return unrealized_pnl, balance, is_position
 
     async def calculate_dynamic_range_width(self, limit=30, lookback=14):
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=limit)

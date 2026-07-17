@@ -55,7 +55,6 @@ class IndicatorsUtils():
 
         last_close = ohlcv['close'].iloc[-1]
         range_width_percent = (smoothed_atr * multiplier) / last_close
-        print("AQUIII", range_width_percent, atr_series)
         return range_width_percent
 
     @staticmethod
@@ -68,7 +67,7 @@ class IndicatorsUtils():
 
         # Pega nos últimos N candles
         last_n = ohlcv.tail(lookback)
-        
+
         # O "Range" é a diferença entre o ponto mais alto e o mais baixo desse período
         channel_high = last_n['high'].max()
         channel_low = last_n['low'].min()
@@ -78,5 +77,4 @@ class IndicatorsUtils():
         # Converte para percentagem do preço atual
         current_price = ohlcv['close'].iloc[-1]
         range_percent = channel_width / current_price
-        print("AQUII", range_percent, channel_high, channel_low)
         return range_percent

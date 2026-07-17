@@ -231,8 +231,8 @@ class DeltaNeutralSniperBot:
         except Exception as e:
             logging.error(f"❌ Erro ao registar saldo financeiro: {e}")
 
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
+                                                   duration_seconds: int = 300) -> bool:
 
         hl_pnl, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
@@ -294,6 +294,69 @@ class DeltaNeutralSniperBot:
                 logging.info("✅ Preço voltou para dentro. Timer resetado.")
                 self.out_of_range_since = None
             return False
+
+        return False
+
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
+                                               duration_seconds: int = 300) -> bool:
+
+        """
+        hl_pnl, _, is_position = await self.hl_client.get_balance()
+        position_data = await self.meteora_client.get_position()
+        total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
+
+        if position_data is not None and is_position:
+            profit_pct = 0.004
+        elif position_data is None or is_position is False:
+            profit_pct = 0.002
+
+        PROFIT_TARGET = self.total_usdc_capital * profit_pct
+        """
+
+        # 1. Obtenção segura
+        hl_pnl, _, is_hl_active = await self.hl_client.get_balance()
+        position_data = await self.meteora_client.get_position()
+        is_meteora_active = position_data is not None
+
+        # 2. Cálculo do PnL
+        meteora_pnl = position_data.pnlUsd if is_meteora_active else 0.0
+        total_pnl = (hl_pnl + meteora_pnl - self.hyperliquid_fees)
+
+        # 3. Target dinâmico (mais seguro)
+        # Se ambas estão ativas = 0.4%, se apenas uma estiver = 0.2%
+        active_legs = (1 if is_hl_active else 0) + (1 if is_meteora_active else 0)
+        profit_pct = 0.004 if active_legs == 2 else 0.002
+        PROFIT_TARGET = self.total_usdc_capital * profit_pct
+
+        if total_pnl >= PROFIT_TARGET:
+            logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
+            return True
+
+        status_with_margin = await self.hl_client.check_range_status(min_price, max_price, self.range_margin_pct)
+        status_without_margin = await self.hl_client.check_range_status(min_price, max_price, 0.0)
+
+        # --- LÓGICA DE FECHO ANTECIPADO (Early Exit - 10% antes) ---
+
+        # Se subiu e bateu no buffer: Fecha SÓ o Hedge (HL) e deixa a Meteora fluir
+        if status_with_margin == RangeStatus.OUT_UPPER:
+            logging.info("🚀 Buffer superior atingido: Fechando HL antecipadamente.")
+            await self.hl_client.close_position()
+            return False  # Retornamos False para o bot NÃO parar e deixar a Meteora continuar
+
+        # Se caiu e bateu no buffer: Fecha SÓ a Pool (Meteora) e deixa o Hedge fluir
+        if status_with_margin == RangeStatus.OUT_LOWER:
+            logging.info("📉 Buffer inferior atingido: Fechando Meteora antecipadamente.")
+            await self.meteora_client.close_all()
+            return False  # Retornamos False para o bot continuar a monitorizar o Hedge
+
+        # --- LÓGICA DE FECHO FINAL (Hard Exit - No limite do range) ---
+
+        # Se saiu totalmente do range: Fecha TUDO o que ainda estiver aberto
+        if status_without_margin == RangeStatus.OUT_UPPER or status_without_margin == RangeStatus.OUT_LOWER:
+            logging.info("🛑 Preço fora do range total: Fecho final de tudo.")
+            await self.hl_client.close_position()
+            await self.meteora_client.close_all()
+            return True  # Aqui sim, terminamos a operação
 
         return False
 
