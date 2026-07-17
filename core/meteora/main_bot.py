@@ -407,8 +407,11 @@ class DeltaNeutralSniperBot:
                 logging.error("Meteora rebalance failed")
         return position
 
-    async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
-        if position is None:
+    async def open_position_management(self) -> PositionStatus | None:
+        meteora_position = await self.meteora_client.get_position()
+        hl_position = await self.hl_client.get_position()
+
+        if meteora_position is None and hl_position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
@@ -489,7 +492,7 @@ class DeltaNeutralSniperBot:
 
                 if position_data is None:
                     if not await self.should_wait_for_market():
-                        position_data = await self.open_position_management(position_data)
+                        position_data = await self.open_position_management()
                     else:
                         await asyncio.sleep(10)  # Descanso profundo
                     continue
