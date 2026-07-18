@@ -329,10 +329,6 @@ class DeltaNeutralSniperBot:
         profit_pct = 0.004 if active_legs == 2 else 0.002
         PROFIT_TARGET = self.total_usdc_capital * profit_pct
 
-        if total_pnl >= PROFIT_TARGET:
-            logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
-            return True
-
         status_with_margin = await self.hl_client.check_range_status(min_price, max_price, self.range_margin_pct)
         status_without_margin = await self.hl_client.check_range_status(min_price, max_price, 0.0)
 
@@ -358,6 +354,10 @@ class DeltaNeutralSniperBot:
             await self.hl_client.close_position()
             await self.meteora_client.close_all()
             return True  # Aqui sim, terminamos a operação
+
+        if total_pnl >= PROFIT_TARGET:
+            logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
+            return True
 
         return False
 
