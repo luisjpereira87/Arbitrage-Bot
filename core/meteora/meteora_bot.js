@@ -577,28 +577,46 @@ async function getPositionPnL(poolAddress, positionAddress) {
     }
 }
 
-async function getPositionPnL__(poolAddress, positionAddress) {
+async function getLastPositionFromPnL(poolAddress) {
     try {
-        // Consultamos a lista de PnL do pool
+        // 1. Consulta a API para listar todas as posições do utilizador nesse pool
         const response = await fetch(`https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toBase58()}`);
 
         if (!response.ok) throw new Error(`Erro API PnL: ${response.statusText}`);
 
         const data = await response.json();
 
-        // Filtra EXATAMENTE pela chave da posição que estás a analisar
-        const targetPosition = data.positions.find(pos => pos.positionAddress === positionAddress);
-
-        if (!targetPosition) {
-            console.log(`⚠️ Posição ${positionAddress} não encontrada na API de PnL.`);
-            return 0;
+        // 2. Verifica se existem posições
+        if (!data.positions || data.positions.length === 0) {
+            console.log(JSON.stringify({ exists: false }));
+            return;
         }
 
-        return parseFloat(targetPosition.pnlUsd || 0);
+        // 3. Retorna a primeira posição (a mais recente ou a que o endpoint prioriza)
+        const lastPosition = data.positions[0];
+
+        // Retornamos os dados cruciais que precisas para o teu range (lower/upper)
+        // A API de PnL geralmente devolve estes campos:
+
+        console.log(JSON.stringify({
+            exists: true,
+            address: lastPosition.positionAddress,
+            //inRange: inRange,
+            //activeBin: activeBinId,
+            //lowerBin: lowerBinId,
+            //upperBin: upperBinId,
+            lowerPrice: parseFloat(lastPosition.minPrice),
+            upperPrice: parseFloat(lastPosition.maxPrice),
+            size: 1,
+            //totalXAmount: parseFloat(lastPosition.unrealizedPnl.balanceTokenX.amount),
+            //totalYAmount: parseFloat(lastPosition.unrealizedPnl.balanceTokenY.amount),
+            //pnlUsd: pnlUsd
+        }));
 
     } catch (error) {
-        console.error("Erro na consulta de PnL:", error);
-        return 0;
+        //console.error("❌ Erro ao recuperar última posição do PnL:", error);
+        console.log(JSON.stringify({ status: "ERROR", message: error.message }));
+        //return null;
     }
 }
 
@@ -720,6 +738,15 @@ if (command === "open") {
     //process.exit(0);
     (async () => {
         await getPosition(args[1]);
+        process.exit(0);
+    })();
+} else if (command === "get_last_position") {
+    //handleActionSimple(getPosition(args[1]), "SUCCESS_GET_POSITION")
+    //const poolAddress = args[1];
+    //getPosition(poolAddress);
+    //process.exit(0);
+    (async () => {
+        await getLastPositionFromPnL(args[1]);
         process.exit(0);
     })();
 } else if (command === "calculate") {

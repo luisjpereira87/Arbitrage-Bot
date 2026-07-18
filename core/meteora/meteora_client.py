@@ -83,6 +83,28 @@ class MeteoraClient:
         }
         return PositionStatus(**status_data)
 
+    async def get_last_position(self) -> (PositionStatus | None):
+        data = await self._execute_async(["get_last_position", self.pool_config.address])
+        print(data)
+        if not data.get("exists"):
+            return None
+        status_data = {
+            "exists": data.get("exists"),
+            "address": data.get("address"),
+            "inRange": data.get("inRange"),
+            "activeBin": int(data.get("activeBin", 0)),
+            "lowerBin": int(data.get("lowerBin", 0)),
+            "upperBin": int(data.get("upperBin", 0)),
+            "lowerPrice": float(data.get("lowerPrice", 0.0)),
+            "upperPrice": float(data.get("upperPrice", 0.0)),
+            "size": float(data.get("size", 0.0)),
+            "totalXAmount": float(data.get("totalXAmount", 0.0)),
+            "totalYAmount": float(data.get("totalYAmount", 0.0)),
+            "pnlUsd": float(data.get("pnlUsd", 0.0)),
+        }
+
+        return PositionStatus(**status_data)
+
     async def open_position(self, usdc: float, price: float, width: float):
         data = await self._execute_async(["open", self.pool_config.address, str(usdc), str(price), str(width)])
         # print(f"Position object {data}")

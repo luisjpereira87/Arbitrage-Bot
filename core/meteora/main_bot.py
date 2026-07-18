@@ -76,7 +76,8 @@ class DeltaNeutralSniperBot:
         self.last_known_range = 0.0
         self.last_calculation_time = 0
 
-        self.lookback_range = 21
+        self.lookback_range = 50
+        self.lookback_limit = 100
         self.range_margin_pct = 0.2
 
         slippage_buffer = 0.0002
@@ -231,8 +232,8 @@ class DeltaNeutralSniperBot:
         except Exception as e:
             logging.error(f"❌ Erro ao registar saldo financeiro: {e}")
 
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
+                                                   duration_seconds: int = 300) -> bool:
 
         hl_pnl, _, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
@@ -297,8 +298,8 @@ class DeltaNeutralSniperBot:
 
         return False
 
-    async def is_price_outside_range_sustained_new(self, min_price: float, max_price: float,
-                                                   duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
+                                               duration_seconds: int = 300) -> bool:
 
         """
         hl_pnl, _, is_position = await self.hl_client.get_balance()
@@ -394,7 +395,8 @@ class DeltaNeutralSniperBot:
 
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
-            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
+            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
+                                                                                      lookback=self.lookback_range)
             range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
             logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
@@ -407,6 +409,40 @@ class DeltaNeutralSniperBot:
                 logging.error("Meteora rebalance failed")
         return position
 
+    async def loop_management(self) -> PositionStatus | None:
+        position = await self.meteora_client.get_position()
+        hl_position = await self.hl_client.get_position()
+
+        if position is not None or hl_position is not None:
+
+            if position is None:
+                last_position = await self.meteora_client.get_last_position()
+                lower_price = last_position.lowerPrice
+                upper_price = last_position.upperPrice
+            else:
+                lower_price = position.lowerPrice
+                upper_price = position.upperPrice
+
+            is_outside = await self.is_price_outside_range_sustained(
+                lower_price,
+                upper_price,
+                300
+            )
+            return position
+
+        if position is None:
+            if not await self.should_wait_for_market():
+                return await self.open_position_management(position)
+            else:
+                await asyncio.sleep(10)  # Descanso profundo
+            return position
+        elif position.size > 1:
+            is_closed = await self.close_position(position)
+            if is_closed:
+                return None
+
+        return await self.rebalanced_management(position)
+
     async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
         # meteora_position = await self.meteora_client.get_position()
         # hl_position = await self.hl_client.get_position()
@@ -414,7 +450,8 @@ class DeltaNeutralSniperBot:
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
-            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
+            range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
+                                                                                      lookback=self.lookback_range)
             range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
             logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
             await self.open_position(market_status.raw_price, range_percentage)
@@ -461,7 +498,8 @@ class DeltaNeutralSniperBot:
 
         # Verifica se precisamos de atualizar o range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
-            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
+            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
+                                                                                       lookback=self.lookback_range)
             self.last_calculation_time = current_time
 
         # Verifica se o range é abusivo
@@ -486,10 +524,11 @@ class DeltaNeutralSniperBot:
         heartbeat_interval = 120
         last_heartbeat = time.time()
 
-        position_data = await self.meteora_client.get_position()
+        # position_data = await self.meteora_client.get_position()
         while True:
             try:
 
+                """
                 if position_data is None:
                     if not await self.should_wait_for_market():
                         position_data = await self.open_position_management(position_data)
@@ -502,6 +541,8 @@ class DeltaNeutralSniperBot:
                         position_data = None
                         continue
                 position_data = await self.rebalanced_management(position_data)
+                """
+                await self.loop_management()
                 last_heartbeat = await self.heartbeat_log(last_heartbeat, heartbeat_interval)
 
                 await asyncio.sleep(5)
@@ -523,4 +564,5 @@ logging.basicConfig(
 if __name__ == "__main__":
     # Configuração de Arranque Inicial: Aloca $1000 USDC totais, com um range de 2 dólares de largura
     bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24)
+    # bot.meteora_client.get_last_position()
     asyncio.run(bot.start_sniper_cycle())
