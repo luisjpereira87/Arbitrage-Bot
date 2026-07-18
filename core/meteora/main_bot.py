@@ -334,6 +334,15 @@ class DeltaNeutralSniperBot:
 
         # --- LÓGICA DE FECHO ANTECIPADO (Early Exit - 10% antes) ---
 
+        # --- LÓGICA DE FECHO FINAL (Hard Exit - No limite do range) ---
+
+        # Se saiu totalmente do range: Fecha TUDO o que ainda estiver aberto
+        if status_without_margin == RangeStatus.OUT_UPPER or status_without_margin == RangeStatus.OUT_LOWER:
+            logging.info("🛑 Preço fora do range total: Fecho final de tudo.")
+            await self.hl_client.close_position()
+            await self.meteora_client.close_all()
+            return True  # Aqui sim, terminamos a operação
+
         # Se subiu e bateu no buffer: Fecha SÓ o Hedge (HL) e deixa a Meteora fluir
         if status_with_margin == RangeStatus.OUT_UPPER:
             logging.info("🚀 Buffer superior atingido: Fechando HL antecipadamente.")
@@ -345,15 +354,6 @@ class DeltaNeutralSniperBot:
             logging.info("📉 Buffer inferior atingido: Fechando Meteora antecipadamente.")
             await self.meteora_client.close_all()
             return False  # Retornamos False para o bot continuar a monitorizar o Hedge
-
-        # --- LÓGICA DE FECHO FINAL (Hard Exit - No limite do range) ---
-
-        # Se saiu totalmente do range: Fecha TUDO o que ainda estiver aberto
-        if status_without_margin == RangeStatus.OUT_UPPER or status_without_margin == RangeStatus.OUT_LOWER:
-            logging.info("🛑 Preço fora do range total: Fecho final de tudo.")
-            await self.hl_client.close_position()
-            await self.meteora_client.close_all()
-            return True  # Aqui sim, terminamos a operação
 
         if total_pnl >= PROFIT_TARGET:
             logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
