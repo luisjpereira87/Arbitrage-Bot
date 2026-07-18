@@ -231,8 +231,8 @@ class DeltaNeutralSniperBot:
         except Exception as e:
             logging.error(f"❌ Erro ao registar saldo financeiro: {e}")
 
-    async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
-                                                   duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
+                                               duration_seconds: int = 300) -> bool:
 
         hl_pnl, _, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
@@ -297,8 +297,8 @@ class DeltaNeutralSniperBot:
 
         return False
 
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained_new(self, min_price: float, max_price: float,
+                                                   duration_seconds: int = 300) -> bool:
 
         """
         hl_pnl, _, is_position = await self.hl_client.get_balance()
@@ -396,7 +396,7 @@ class DeltaNeutralSniperBot:
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
             range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
-            logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
+            logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
                                                            range_percentage)
             position = await self.meteora_client.get_position()
@@ -408,10 +408,10 @@ class DeltaNeutralSniperBot:
         return position
 
     async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
-        meteora_position = await self.meteora_client.get_position()
-        hl_position = await self.hl_client.get_position()
+        # meteora_position = await self.meteora_client.get_position()
+        # hl_position = await self.hl_client.get_position()
 
-        if meteora_position is None and hl_position is None:
+        if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(lookback=self.lookback_range)
