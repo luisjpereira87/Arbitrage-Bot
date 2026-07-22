@@ -76,7 +76,7 @@ class DeltaNeutralSniperBot:
         self.last_known_range = 0.0
         self.last_calculation_time = 0
 
-        self.lookback_range = 50
+        self.lookback_range = 21
         self.lookback_limit = 100
         self.range_margin_pct = 0.2
 
@@ -397,10 +397,10 @@ class DeltaNeutralSniperBot:
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
                                                                                       lookback=self.lookback_range)
-            range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
-            logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage}")
+            # range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
+            logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage_raw}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
-                                                           range_percentage)
+                                                           range_percentage_raw)
             position = await self.meteora_client.get_position()
             if is_rebalanced:
                 self.out_of_range_since = None
@@ -452,9 +452,9 @@ class DeltaNeutralSniperBot:
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
                                                                                       lookback=self.lookback_range)
-            range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
-            logging.info(f"Range calculado Original: {range_percentage}, Reajustado: {range_percentage}")
-            await self.open_position(market_status.raw_price, range_percentage)
+            # range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
+            logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage_raw}")
+            await self.open_position(market_status.raw_price, range_percentage_raw)
             position = await self.meteora_client.get_position()
         return position
 
