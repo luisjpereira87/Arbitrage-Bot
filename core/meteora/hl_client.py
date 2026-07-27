@@ -137,7 +137,7 @@ class HlClient:
 
     async def calculate_dynamic_range_width(self, limit=30, lookback=14):
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=limit)
-        return IndicatorsUtils.calculate_channel_width(ohlcv, lookback=lookback)
+        return max(0.02, IndicatorsUtils.calculate_channel_width(ohlcv, lookback=lookback))
 
     async def adjust_balance(self, capital_amount: float, dex_price: float) -> tuple[
         float, float]:

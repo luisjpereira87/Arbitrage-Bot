@@ -1,5 +1,4 @@
 import asyncio
-import csv
 import logging
 import os
 import sys
@@ -78,7 +77,7 @@ class DeltaNeutralSniperBot:
 
         self.lookback_range = 21
         self.lookback_limit = 100
-        self.range_margin_pct = 0.2
+        self.range_margin_pct = 0.1
 
         slippage_buffer = 0.0002
         fee_rate = 0.00025 + slippage_buffer
@@ -169,105 +168,25 @@ class DeltaNeutralSniperBot:
 
         return usdc_balance_total_wallet + usdc_balance_total_strategy
 
-    async def log_financial_state(self, action_type: str, status: str, position: PositionStatus):
-        """
-        Regista o estado financeiro e compara com o anterior para medir performance.
-        """
-        file_path = "bot_performance.csv"
-
-        try:
-            wallet_balance = await self.get_balance(position)
-            """
-            market_status = await self.meteora_client.get_status()
-
-            # 1. Obter saldos atuais (ajusta os métodos conforme o teu código)
-            sol_bal = await self.solana_executor.get_token_balance('So11111111111111111111111111111111111111112',
-                                                                   Chains.SOLANA)  # Em SOL
-            usdc_bal = await self.solana_executor.get_token_balance('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-                                                                    Chains.SOLANA)  # Em USDC
-            """
-
-            sol_balance_strategy = position.totalXAmount / (10 ** self.pool_config.tokenX.decimals)
-            usdc_balance_strategy = position.totalYAmount / (10 ** self.pool_config.tokenY.decimals)
-
-            hl_pnl, hl_balance = await self.hl_client.get_balance()  # Em USDC
-
-            # 2. Obter valor atual do SOL para normalizar o Total
-            # sol_price = await self.get_current_sol_price()
-            total_valor_usdc = wallet_balance + hl_balance
-
-            # 3. Ler o último saldo registado para comparação
-            last_total = 0.0
-            if os.path.exists(file_path):
-                with open(file_path, "r") as f:
-                    reader = csv.DictReader(f)
-                    rows = list(reader)
-                    if rows:
-                        last_total = float(rows[-1]['Total_USDC'])
-
-            # 4. Cálculo da variação
-            diff = total_valor_usdc - last_total
-
-            # 5. Escrever o novo registo
-            file_exists = os.path.exists(file_path)
-            with open(file_path, "a", newline='') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(["Timestamp", "Action", "Status", "SOL", "USDC", "HL_Margin", "Total_USDC", "Diff"])
-
-                writer.writerow([
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    action_type, status,
-                    round(sol_balance_strategy, 4), round(usdc_balance_strategy, 2),
-                    round(hl_balance, 2), round(total_valor_usdc, 2),
-                    round(diff, 4)
-                ])
-
-            # 6. Alerta se a performance for negativa
-            if last_total > 0 > diff:
-                logging.warning(f"📉 [ALERTA] Saldo caiu {abs(diff):.2f} USDC após {action_type}!")
-            else:
-                logging.info(f"💰 [LOG] Saldo atualizado: {total_valor_usdc:.2f} USDC (Variação: {diff:+.4f})")
-
-        except Exception as e:
-            logging.error(f"❌ Erro ao registar saldo financeiro: {e}")
-
-    async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
-                                                   duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
+                                               duration_seconds: int = 300) -> bool:
 
         hl_pnl, _, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
         total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
-        PROFIT_TARGET = self.total_usdc_capital * 0.004
+        PROFIT_TARGET = self.total_usdc_capital * 0.002
 
         if total_pnl >= PROFIT_TARGET:
-            logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
+            logging.info(f"✅ Preço atingiu a meta de 0.2%: {total_pnl:.2f}")
             return True
 
         status = await self.hl_client.check_range_status(min_price, max_price, self.range_margin_pct)
-        """
-        # Check de turbulência (novo)
-        is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
 
-        if is_turbulent and total_pnl > 0:
-            logging.warning(f"🚨 SPIKE/TURBULÊNCIA + FORA DO RANGE ({status}). Fecho imediato!")
-            self.out_of_range_since = None
-            return True
-        """
         # 1. SE SAIU DO RANGE
         if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
 
-            """
-            # AÇÃO IMEDIATA: Se estiver fora DO RANGE E o mercado estiver TURBULENTO,
-            # não esperes os 300 segundos. Sai já!
-            if is_turbulent and total_pnl < 0:
-                logging.warning(f"🚨 SPIKE/TURBULÊNCIA + FORA DO RANGE ({status}). Fecho imediato!")
-                self.out_of_range_since = None
-                return True
-            """
-
             if total_pnl > 0:
-                logging.warning(f"🚨 Preço fora do range mas pnl positivo: {total_pnl:.2f}, fechp imediato...")
+                logging.warning(f"🚨 Preço fora do range mas pnl positivo: {total_pnl:.2f}, fecho imediato...")
                 self.out_of_range_since = None
                 return True
 
@@ -298,8 +217,8 @@ class DeltaNeutralSniperBot:
 
         return False
 
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained__(self, min_price: float, max_price: float,
+                                                 duration_seconds: int = 300) -> bool:
 
         """
         hl_pnl, _, is_position = await self.hl_client.get_balance()
@@ -411,6 +330,7 @@ class DeltaNeutralSniperBot:
 
     async def loop_management(self) -> PositionStatus | None:
         position = await self.meteora_client.get_position()
+        """
         hl_position = await self.hl_client.get_position()
 
         if position is not None or hl_position is not None:
@@ -429,7 +349,7 @@ class DeltaNeutralSniperBot:
                 300
             )
             return position
-
+        """
         if position is None:
             if not await self.should_wait_for_market():
                 return await self.open_position_management(position)
@@ -520,28 +440,11 @@ class DeltaNeutralSniperBot:
         await self.hl_client.start()
         await asyncio.sleep(2)
 
-        # margin_percentage = 0.1
         heartbeat_interval = 120
         last_heartbeat = time.time()
 
-        # position_data = await self.meteora_client.get_position()
         while True:
             try:
-
-                """
-                if position_data is None:
-                    if not await self.should_wait_for_market():
-                        position_data = await self.open_position_management(position_data)
-                    else:
-                        await asyncio.sleep(10)  # Descanso profundo
-                    continue
-                elif position_data.size > 1:
-                    is_closed = await self.close_position(position_data)
-                    if is_closed:
-                        position_data = None
-                        continue
-                position_data = await self.rebalanced_management(position_data)
-                """
                 await self.loop_management()
                 last_heartbeat = await self.heartbeat_log(last_heartbeat, heartbeat_interval)
 
