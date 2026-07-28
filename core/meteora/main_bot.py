@@ -77,7 +77,7 @@ class DeltaNeutralSniperBot:
 
         self.lookback_range = 21
         self.lookback_limit = 100
-        self.range_margin_pct = 0.1
+        self.range_margin_pct = 0.25
 
         slippage_buffer = 0.0002
         fee_rate = 0.00025 + slippage_buffer
@@ -168,8 +168,8 @@ class DeltaNeutralSniperBot:
 
         return usdc_balance_total_wallet + usdc_balance_total_strategy
 
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
+                                                   duration_seconds: int = 300) -> bool:
 
         hl_pnl, _, _ = await self.hl_client.get_balance()
         position_data = await self.meteora_client.get_position()
@@ -213,6 +213,91 @@ class DeltaNeutralSniperBot:
             if self.out_of_range_since is not None:
                 logging.info("✅ Preço voltou para dentro. Timer resetado.")
                 self.out_of_range_since = None
+            return False
+
+        return False
+
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
+                                               duration_seconds: int = 300) -> bool:
+
+        # 1. Obtenção de dados e cálculo do PnL total
+        hl_pnl, _, _ = await self.hl_client.get_balance()
+        position_data = await self.meteora_client.get_position()
+
+        meteora_pnl = position_data.pnlUsd if position_data is not None else 0.0
+        total_pnl = (hl_pnl + meteora_pnl - self.hyperliquid_fees)
+
+        # Novo target de lucro ajustado para a nova estratégia (0.2%)
+        PROFIT_TARGET = self.total_usdc_capital * 0.002
+
+        # Se atingiu a meta de lucro, fecha independentemente de estar dentro ou fora
+        if total_pnl >= PROFIT_TARGET:
+            logging.info(f"✅ Preço atingiu a meta de lucro de 0.2%: {total_pnl:.2f}")
+            self.out_of_range_since = None
+            return True
+
+        # 2. Verificar o estado atual do range
+        status = await self.hl_client.check_range_status(min_price, max_price, self.range_margin_pct)
+
+        # 3. SE ESTIVER DENTRO DO RANGE
+        if status == RangeStatus.INSIDE:
+            if self.out_of_range_since is not None:
+                logging.info("✅ Preço voltou para dentro do range. Timer resetado.")
+                self.out_of_range_since = None
+            return False
+
+        # 4. SE ESTIVER FORA DO RANGE (OUT_UPPER ou OUT_LOWER)
+        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
+
+            # Se já está fora mas o PnL é positivo, fecha logo para garantir o ganho
+            if total_pnl > 0:
+                logging.warning(f"🚨 Preço fora do range com PnL positivo: {total_pnl:.2f}, fecho imediato...")
+                self.out_of_range_since = None
+                return True
+
+            # Verificar se o mercado está turbulento (anula o timer e fecha imediatamente)
+            is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
+            if is_turbulent:
+                logging.warning(f"🚨 Preço fora do range ({status}) + MERCADO TURBULENTO! Fecho imediato.")
+                self.out_of_range_since = None
+                return True
+
+            # Calcular a distância percentual ao limite para definir a urgência do timer
+            distance_pct = await self.hl_client.get_range_distance_percentage(min_price, max_price)
+
+            if distance_pct >= 0.20:
+                dynamic_duration = 600  # Acima de 20% (ou mais longe)
+            elif distance_pct >= 0.10:
+                dynamic_duration = 300  # Intervalo exato entre 0.20 e 0.10 faz 300s
+            elif distance_pct >= 0.05:
+                dynamic_duration = 60  # Intervalo exato entre 0.10 e 0.05 faz 60s
+            else:
+                dynamic_duration = 0  # Abaixo de 0.05 (muito perto do limite) -> Fecho imediato
+
+            if dynamic_duration == 0:
+                logging.warning(
+                    f"🚨 Preço ultrapassou o limiar crítico de proximidade ({distance_pct * 100:.1f}%). Fecho imediato!")
+                self.out_of_range_since = None
+                return True
+
+            # Iniciar ou acompanhar o temporizador dinâmico
+            if self.out_of_range_since is None:
+                self.out_of_range_since = time.time()
+                logging.info(
+                    f"⚠️ Preço {status} ({distance_pct * 100:.1f}%). Iniciando timer dinâmico de {dynamic_duration}s...")
+                return False
+
+            elapsed = time.time() - self.out_of_range_since
+            if elapsed >= dynamic_duration:
+                logging.info(f"🚨 Timer dinâmico de {dynamic_duration}s atingido. Rebalanceamento autorizado!")
+                self.out_of_range_since = None
+                return True
+
+            # Log periódico para evitar spam na consola (a cada 20 segundos)
+            if time.time() - getattr(self, 'last_log_time', 0) > 20:
+                logging.info(f"⏳ Aguardando... Fora há {elapsed:.0f}s de {dynamic_duration}s necessários.")
+                self.last_log_time = time.time()
+
             return False
 
         return False

@@ -124,6 +124,29 @@ class HlClient:
 
         return RangeStatus.INSIDE
 
+    async def get_range_distance_percentage(self, min_price: float, max_price: float) -> float:
+        if self.cached_price <= 0:
+            return 1.0  # Segurança caso o preço não esteja carregado
+
+        interval_size = max_price - min_price
+        if interval_size <= 0:
+            return 0.0
+
+        # Ponto médio do range
+        mid_price = (min_price + max_price) / 2
+
+        # Se o preço está abaixo do centro, medimos a distância relativa ao min_price
+        if self.cached_price <= mid_price:
+            # Distância do preço atual até ao min_price em relação ao tamanho total do intervalo (ou metade dele)
+            # Quanto mais próximo de min_price, mais próximo de 0.0 (crítico)
+            distance = (self.cached_price - min_price) / interval_size
+        else:
+            # Se está acima do centro, medimos a distância até ao max_price
+            distance = (max_price - self.cached_price) / interval_size
+
+        # Garante que fica limitado entre 0.0 e 1.0
+        return max(0.0, min(1.0, distance))
+
     async def get_balance(self) -> tuple[float | None, float, bool]:
         position = await self.hl_exchange.get_open_position(self.symbol)
         balance = await self.hl_exchange.get_available_balance()

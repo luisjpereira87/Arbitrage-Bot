@@ -281,16 +281,6 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     const dlmmPool = await DLMMClass.create(connection, new PublicKey(poolAddress));
     console.log(`🚀 [Meteora] A iniciar ciclo dinâmico para capital de $${totalUsdcCapital} USDC...`);
 
-    /**
-    // 1. Calcular o capital de injeção
-    const alvoMetadeUsdc = totalUsdcCapital / 2;
-    const solFinalAInjetar = alvoMetadeUsdc / currentPrice;
-
-    // DEFINIÇÃO DOS BNs
-    const totalXAmount = new anchor.BN(Math.floor(solFinalAInjetar * 1_000_000_000));
-    const totalYAmount = new anchor.BN(Math.floor(alvoMetadeUsdc * 1_000_000));
-    **/
-
     // 1. Calcular o capital de injeção (30% SOL / 70% USDC)
     const solPercent = 0.50;
     const usdcPercent = 1 - solPercent;
@@ -310,7 +300,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Spot,
+            strategyType: StrategyType.Curve,
         },
     });
 
@@ -333,17 +323,6 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
     if (!gasOk) throw new Error("Falha no reabastecimento de gás/rent.");
 
     // 5. Balanceamento (Swap se necessário)
-
-    /**
-    const usdcTokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
-    const usdcBalance = usdcTokenAccounts.value.length > 0 ? usdcTokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
-
-    if (Math.abs(usdcBalance - alvoMetadeUsdc) > 0.50) {
-        const solParaVender = (alvoMetadeUsdc - usdcBalance) / currentPrice;
-        await executeJupiterSwap(WSOL_MINT, USDC_MINT, Math.round(solParaVender * 1_000_000_000));
-        await new Promise(r => setTimeout(r, 3000));
-    }
-    **/
     const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
     const solAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(WSOL_MINT) });
 
@@ -392,7 +371,7 @@ async function openBalancedPosition(poolAddress, totalUsdcCapital, currentPrice,
         strategy: {
             minBinId: metrics.activeBinId - metrics.binsOffset,
             maxBinId: metrics.activeBinId + metrics.binsOffset,
-            strategyType: StrategyType.Spot
+            strategyType: StrategyType.Curve
         },
     });
 
