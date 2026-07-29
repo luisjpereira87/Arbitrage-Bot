@@ -33,7 +33,6 @@ logging.getLogger("solana").setLevel(logging.WARNING)
 
 async def run():
     cex_bot = CexBot()
-    asyncio.run(cex_bot.test_spread_loop())
     delta_bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24)
     await asyncio.gather(
         cex_bot.test_spread_loop(),
