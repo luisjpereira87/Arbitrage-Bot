@@ -5,6 +5,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from core.bots.cex_bot import CexBot
 from core.config.properties_dex import PropertiesDex
 from core.config.properties_multi import PropertiesMulti
 from core.meteora.main_bot import DeltaNeutralSniperBot
@@ -31,11 +32,11 @@ logging.getLogger("solana").setLevel(logging.WARNING)
 
 
 async def run():
-    # cex_bot = CexBot()
-    # asyncio.run(cex_bot.test_spread_loop())
+    cex_bot = CexBot()
+    asyncio.run(cex_bot.test_spread_loop())
     delta_bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24)
     await asyncio.gather(
-        # cex_bot.test_spread_loop(),
+        cex_bot.test_spread_loop(),
         delta_bot.start_sniper_cycle()
     )
 

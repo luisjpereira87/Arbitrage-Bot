@@ -1,7 +1,7 @@
 web3
 eth-account
 python-dotenv
-ccxt==4.5.63
+ccxt
 aiohttp
 solana
 solders

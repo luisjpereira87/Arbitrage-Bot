@@ -491,7 +491,7 @@ class DeltaNeutralSniperBot:
         e False se estiver apto para operar.
         """
         current_time = time.time()
-        MAX_RANGE_PCT = 0.02
+        MAX_RANGE_PCT = 0.025
         CALC_INTERVAL = 100
         COOLDOWN_DURATION = 300
         TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 import time
 from datetime import datetime
 from typing import Dict
@@ -37,7 +38,7 @@ class CexBot:
         if not os.path.exists(self.library_path):
             print(f"🚨 [ERRO] Ainda não encontrei o ficheiro na raiz do projeto!")
             # Se falhar na raiz, mantemos a procura na pasta local para não quebrar o CCXT caso o movas para lá
-            library_path = os.path.join(bots_dir, self.properties.LIGHTER_SIGNER_FILE)
+            self.library_path = os.path.join(bots_dir, self.properties.LIGHTER_SIGNER_FILE)
         else:
             print("✅ Ficheiro detetado na raiz do projeto!")
         print("---------------------------------\n")
@@ -666,6 +667,14 @@ class CexBot:
             import traceback
             traceback.print_exc()
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 if __name__ == "__main__":
     try:
