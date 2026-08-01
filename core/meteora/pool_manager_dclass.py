@@ -24,8 +24,15 @@ RAW_DATA = {
         "address": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
         "binStep": 4,
         "feePct": 0.0020,
-        "tokenX": {"symbol": "SOL", "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "decimals": 9},
-        "tokenY": {"symbol": "USDC", "address": "So11111111111111111111111111111111111111112", "decimals": 6}
+        "tokenX": {"symbol": "SOL", "address": "So11111111111111111111111111111111111111112", "decimals": 9},
+        "tokenY": {"symbol": "USDC", "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "decimals": 6}
+    },
+    "SOL/USDC-ORCA": {
+        "address": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+        "binStep": 4,
+        "feePct": 0.0020,
+        "tokenX": {"symbol": "SOL", "address": " So11111111111111111111111111111111111111112", "decimals": 9},
+        "tokenY": {"symbol": "USDC", "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "decimals": 6}
     }
 }
 

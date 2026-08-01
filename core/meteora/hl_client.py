@@ -15,7 +15,7 @@ class HlClient:
     def __init__(self):
         properties = PropertiesMulti()
         hl = ccxtpro.hyperliquid({
-            "walletAddress": properties.WALLET_ADDRESS_HL,
+            "walletAddress": properties.WALLET_ADDRESS_HL.lower(),
             "privateKey": properties.PRIVATE_KEY_WALLET_HL,
             "enableRateLimit": True,
             "timeout": 10000,
@@ -23,7 +23,7 @@ class HlClient:
             "options": {"defaultSlippage": 0.01},
         })
 
-        self.hl_exchange = ExchangeClient(hl, properties.WALLET_ADDRESS_HL)
+        self.hl_exchange = ExchangeClient(hl, properties.WALLET_ADDRESS_HL.lower())
         self.symbol = "SOL/USDC:USDC"
         self.cached_price = 0.0
         self.out_of_range_since = None
@@ -158,9 +158,15 @@ class HlClient:
 
         return unrealized_pnl, balance, is_position
 
-    async def calculate_dynamic_range_width(self, limit=30, lookback=14):
+    async def calculate_dynamic_range_width(self, limit=30, lookback=14, buffer=0.0):
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=limit)
-        return IndicatorsUtils.calculate_channel_width(ohlcv, lookback=lookback)
+        range_percentage_raw = IndicatorsUtils.calculate_channel_width(ohlcv, lookback=lookback)
+        print(range_percentage_raw)
+        if buffer > 0:
+            range_percentage_raw = range_percentage_raw * (1 + (buffer * 2))
+        print(range_percentage_raw)
+        return range_percentage_raw
+        # return 0.04
 
     async def adjust_balance(self, capital_amount: float, dex_price: float) -> tuple[
         float, float]:

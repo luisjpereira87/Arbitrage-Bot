@@ -13,42 +13,26 @@ from core.meteora.pool_manager_dclass import PoolManager
 from core.web3.executors.solana_executor import SolanaExecutor
 from core.web3.rpcs.solana_manager import SolanaManager
 
-# 1. Descobrir onde o script Python está ( .../core/meteora )
-base_path = os.path.dirname(os.path.abspath(__file__))
-
-# 2. Corrigir de forma forçada caso o caminho já traga "core/meteora" duplicado
-if "core/meteora" in base_path:
-    # Se o base_path já inclui a pasta, apontamos direto ao ficheiro na mesma pasta
-    js_script_path = os.path.join(base_path, "meteora_bot.js")
-else:
-    # Caso contrário, adicionamos a pasta manualmente
-    js_script_path = os.path.join(base_path, "core", "meteora", "meteora_bot.js")
-
-# 3. PRINT DE SEGURANÇA (Para vermos o resultado real no terminal)
-print(f"🔍 [Debug Caminho] A tentar chamar o Node em: {js_script_path}")
-
-USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-WSOL_MINT = "So11111111111111111111111111111111111111112"
-
-POOL_CONFIG = {
-    "SOL/USDC": {
-        "address": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
-        "binStep": 4,
-        "feePct": 0.0020,
-        "tokenX": {"symbol": "SOL", "decimals": 9},
-        "tokenY": {"symbol": "USDC", "decimals": 6}
-    }
-};
-
 
 class DeltaNeutralSniperBot:
-    def __init__(self, usdc_min_hl: float, total_usdc_capital: float):
+    def __init__(self, usdc_min_hl: float, total_usdc_capital: float, sdk_file_path: str):
+
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+        # 2. Corrigir de forma forçada caso o caminho já traga "core/meteora" duplicado
+        if "core/meteora" in base_path:
+            self.js_script_path = os.path.join(base_path, sdk_file_path)
+        else:
+            self.js_script_path = os.path.join(base_path, "core", "meteora", sdk_file_path)
+
+        # 3. PRINT DE SEGURANÇA
+        print(f"🔍 [Debug Caminho] A tentar chamar o Node em: {self.js_script_path}")
+
         # Configuração de alocação de fundos
         self.total_usdc_capital = total_usdc_capital
         self.usdc_min_hl = usdc_min_hl
         self.usdc_hl_leg = (self.total_usdc_capital / 2) * 0.995
-        # self.range_width = range_width_dollars
-        # print("AQUIII", self.total_usdc_capital, self.usdc_min_hl, self.usdc_hl_leg)
+
         if self.usdc_min_hl < self.usdc_hl_leg:
             logging.error(
                 f"❌ Falha: usdc_hl_leg {self.usdc_hl_leg} tem que ser maior que usdc_min_hl {self.usdc_min_hl}!")
@@ -60,9 +44,9 @@ class DeltaNeutralSniperBot:
         # self.sol_short_size = None
         # self.is_position_active = False
 
-        self.pool_config = PoolManager().get("SOL/USDC")
+        self.pool_config = PoolManager().get("SOL/USDC-ORCA")
 
-        self.meteora_client = MeteoraClient(js_script_path, self.pool_config)
+        self.meteora_client = MeteoraClient(self.js_script_path, self.pool_config)
         self.hl_client = HlClient()
         solana_manager = SolanaManager()
         properties = PropertiesMulti()
@@ -75,7 +59,7 @@ class DeltaNeutralSniperBot:
         self.last_known_range = 0.0
         self.last_calculation_time = 0
 
-        self.lookback_range = 21
+        self.lookback_range = 96
         self.lookback_limit = 100
         self.range_margin_pct = 0.25
 
@@ -84,7 +68,7 @@ class DeltaNeutralSniperBot:
         self.hyperliquid_fees = max((self.usdc_hl_leg * fee_rate) * 2, 0.02)
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
-
+        print("aquiii", price_token)
         capital_para_hedge = self.total_usdc_capital / 2
         _, usdc_hl_leg = await self.hl_client.adjust_balance(capital_para_hedge, price_token)
         usdc_meteora = usdc_hl_leg * 2
@@ -161,8 +145,8 @@ class DeltaNeutralSniperBot:
         sol_balance_strategy = 0
         usdc_balance_strategy = 0
         if position is not None:
-            sol_balance_strategy = position.totalXAmount / (10 ** self.pool_config.tokenX.decimals)
-            usdc_balance_strategy = position.totalYAmount / (10 ** self.pool_config.tokenY.decimals)
+            sol_balance_strategy = position.totalXAmount  # / (10 ** self.pool_config.tokenX.decimals)
+            usdc_balance_strategy = position.totalYAmount  # / (10 ** self.pool_config.tokenY.decimals)
 
         usdc_balance_total_strategy = (sol_price * sol_balance_strategy) + usdc_balance_strategy
 
@@ -400,9 +384,9 @@ class DeltaNeutralSniperBot:
             logging.warning("🚨 PREÇO FORA DO RANGE! Rebalanceando...")
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
-                                                                                      lookback=self.lookback_range)
-            # range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
-            logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage_raw}")
+                                                                                      lookback=self.lookback_range,
+                                                                                      buffer=self.range_margin_pct)
+            logging.info(f"Range calculado Original: {range_percentage_raw}")
             is_rebalanced = await self.rebalanced_position(market_status.raw_price,
                                                            range_percentage_raw)
             position = await self.meteora_client.get_position()
@@ -456,20 +440,19 @@ class DeltaNeutralSniperBot:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
             range_percentage_raw = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
-                                                                                      lookback=self.lookback_range)
-            # range_percentage = range_percentage_raw * (1 + (self.range_margin_pct * 2))
-            logging.info(f"Range calculado Original: {range_percentage_raw}, Reajustado: {range_percentage_raw}")
+                                                                                      lookback=self.lookback_range,
+                                                                                      buffer=self.range_margin_pct)
+            logging.info(f"Range calculado Original: {range_percentage_raw}")
             await self.open_position(market_status.raw_price, range_percentage_raw)
             position = await self.meteora_client.get_position()
         return position
 
-    async def heartbeat_log(self, last_heartbeat: float, heartbeat_interval: int):
+    async def heartbeat_log(self, position_data: PositionStatus | None, last_heartbeat: float, heartbeat_interval: int):
         now = time.time()
         if now - last_heartbeat >= heartbeat_interval:
             formated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            position_data = await self.meteora_client.get_position()
-
+            # position_data = await self.meteora_client.get_position()
             # Log único e informativo
             msg = f"💚 [SINAL DE VIDA] {formated_time}"
             if position_data:
@@ -491,7 +474,7 @@ class DeltaNeutralSniperBot:
         e False se estiver apto para operar.
         """
         current_time = time.time()
-        MAX_RANGE_PCT = 0.025
+        MAX_RANGE_PCT = 0.05
         CALC_INTERVAL = 100
         COOLDOWN_DURATION = 300
         TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
@@ -504,7 +487,8 @@ class DeltaNeutralSniperBot:
         # Verifica se precisamos de atualizar o range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
             self.last_known_range = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
-                                                                                       lookback=self.lookback_range)
+                                                                                       lookback=self.lookback_range,
+                                                                                       buffer=self.range_margin_pct)
             self.last_calculation_time = current_time
 
         # Verifica se o range é abusivo
@@ -530,8 +514,8 @@ class DeltaNeutralSniperBot:
 
         while True:
             try:
-                await self.loop_management()
-                last_heartbeat = await self.heartbeat_log(last_heartbeat, heartbeat_interval)
+                position = await self.loop_management()
+                last_heartbeat = await self.heartbeat_log(position, last_heartbeat, heartbeat_interval)
 
                 await asyncio.sleep(5)
             except Exception as e:
@@ -551,6 +535,10 @@ logging.basicConfig(
 # =====================================================================
 if __name__ == "__main__":
     # Configuração de Arranque Inicial: Aloca $1000 USDC totais, com um range de 2 dólares de largura
-    bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24)
+    bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24, sdk_file_path="orca_bot.js")
     # bot.meteora_client.get_last_position()
+
     asyncio.run(bot.start_sniper_cycle())
+
+    # asyncio.run(bot.meteora_client.open_position(24.0, 867.88697, 0.04))
+    # asyncio.run(bot.hl_client.calculate_dynamic_range_width(limit=100, lookback=96, buffer=0))
