@@ -279,6 +279,13 @@ async function calculateOrcaRangeMetrics(currentPrice, rangePercent, whirlpoolDa
 // 5. CORE EXECUTION FUNCTIONS (Orca Implementation)
 // =====================================================================
 async function openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPrice, rangeWidthPercent) {
+
+    position = await getPositionOrca(poolAddress);
+
+    if (position){
+        throw new Error("Existe uma posição aberta...");
+    }
+
     const signer = await setEnvAndLoadWallet();
 
     const whirlpool = await fetchWhirlpool(rpc, poolAddress);
@@ -624,7 +631,8 @@ async function getPositionOrca(poolAddress) {
         const lowerPriceFinal = Math.pow(1.0001, lowerTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
         const upperPriceFinal = Math.pow(1.0001, upperTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
 
-        console.log(JSON.stringify({
+
+        result = {
             exists: true,
             address: positionAddress,
             positionMint: positionMint,
@@ -644,10 +652,13 @@ async function getPositionOrca(poolAddress) {
             currentValueUsd: Number(calculatedCurrentValueUsd.toFixed(2)),
             pnlUsd: Number(pnlUsd.toFixed(2)),
             pnlPercentage: Number(pnlPercentage.toFixed(2))
-        }));
+        }
+        console.log(JSON.stringify(result));
+        return result;
 
     } catch (error) {
         console.log(JSON.stringify({ status: "ERROR", message: error.message }));
+        return null;
     }
 }
 
