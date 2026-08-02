@@ -680,6 +680,13 @@ async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
             }));
 
             if (attempt === maxRetries) {
+
+                console.log(JSON.stringify({
+                    status: "RETRY_ERROR",
+                    attempt: attempt,
+                    maxRetries: maxRetries,
+                    message: `Falha temporária detetada: ${error.message}`
+                }));
                 throw new Error(`Esgotadas as ${maxRetries} tentativas. Erro final: ${error.message}`);
             }
 
