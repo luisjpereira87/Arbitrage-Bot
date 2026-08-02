@@ -61,14 +61,13 @@ class DeltaNeutralSniperBot:
 
         self.lookback_range = 96
         self.lookback_limit = 100
-        self.range_margin_pct = 0.25
+        self.range_margin_pct = 0.15
 
         slippage_buffer = 0.0002
         fee_rate = 0.00025 + slippage_buffer
         self.hyperliquid_fees = max((self.usdc_hl_leg * fee_rate) * 2, 0.02)
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
-        print("aquiii", price_token)
         capital_para_hedge = self.total_usdc_capital / 2
         _, usdc_hl_leg = await self.hl_client.adjust_balance(capital_para_hedge, price_token)
         usdc_meteora = usdc_hl_leg * 2
@@ -239,17 +238,19 @@ class DeltaNeutralSniperBot:
                 self.out_of_range_since = None
                 return True
 
+            """
             # Verificar se o mercado está turbulento (anula o timer e fecha imediatamente)
             is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
             if is_turbulent:
                 logging.warning(f"🚨 Preço fora do range ({status}) + MERCADO TURBULENTO! Fecho imediato.")
                 self.out_of_range_since = None
                 return True
-
+            """
+            
             # Calcular a distância percentual ao limite para definir a urgência do timer
             distance_pct = await self.hl_client.get_range_distance_percentage(min_price, max_price)
 
-            if distance_pct >= 0.20:
+            if distance_pct >= 0.15:
                 dynamic_duration = 600  # Acima de 20% (ou mais longe)
             elif distance_pct >= 0.10:
                 dynamic_duration = 300  # Intervalo exato entre 0.20 e 0.10 faz 300s
