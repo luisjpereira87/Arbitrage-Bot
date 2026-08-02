@@ -462,7 +462,7 @@ async function getMarketStatusOrca(poolAddress) {
         };
 
         console.log(JSON.stringify(statusReport));
-        process.exit(0);
+        //process.exit(0);
 
     } catch (error) {
         const errorReport = {
@@ -470,7 +470,8 @@ async function getMarketStatusOrca(poolAddress) {
             message: error.message
         };
         console.log(JSON.stringify(errorReport));
-        process.exit(1);
+        throw error;
+        //process.exit(1);
     }
 }
 
@@ -515,15 +516,17 @@ async function getPositionOrca(poolAddress) {
         );
 
         if (!positions || positions.length === 0) {
-            console.log(JSON.stringify({ exists: false }));
-            return;
+            //console.log(JSON.stringify({ exists: false }));
+            //return;
+            throw new Error("RPC ainda não indexou a posição (lista vazia). A tentar novamente...");
         }
 
         const targetPosition = positions.find(p => p.data && p.data.whirlpool === poolAddress);
 
         if (!targetPosition) {
-            console.log(JSON.stringify({ exists: false }));
-            return;
+            //console.log(JSON.stringify({ exists: false }));
+            //return;
+            throw new Error(`Posição para a pool ${poolAddress} ainda não encontrada no RPC. A tentar novamente...`);
         }
 
         const whirlpool = await fetchWhirlpool(rpc, poolAddress);
@@ -659,7 +662,8 @@ async function getPositionOrca(poolAddress) {
 
     } catch (error) {
         console.log(JSON.stringify({ status: "ERROR", message: error.message }));
-        return null;
+        throw error;
+        //return null;
     }
 }
 
