@@ -280,7 +280,8 @@ async function calculateOrcaRangeMetrics(currentPrice, rangePercent, whirlpoolDa
 // =====================================================================
 async function openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPrice, rangeWidthPercent) {
 
-    position = await getPositionOrca(poolAddress);
+    //position = await getPositionOrca(poolAddress);
+    position = await withRetry(() => getPositionOrca(poolAddress), 3, 2000);
 
     if (position){
         throw new Error("Existe uma posição aberta...");
@@ -662,6 +663,27 @@ async function getPositionOrca(poolAddress) {
     }
 }
 
+async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await asyncFn();
+        } catch (error) {
+            console.log(JSON.stringify({
+                status: "RETRY_WARNING",
+                attempt: attempt,
+                maxRetries: maxRetries,
+                message: `Falha temporária detetada: ${error.message}`
+            }));
+
+            if (attempt === maxRetries) {
+                throw new Error(`Esgotadas as ${maxRetries} tentativas. Erro final: ${error.message}`);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+        }
+    }
+}
+
 async function handleAction(promise, poolAddress, successStatus) {
     try {
         await promise;
@@ -698,12 +720,14 @@ if (command === "open") {
     handleAction(closeAllPoolPositionsAndSettleOrca(args[1]), args[1], "SUCCESS_CLOSE_ALL");
 } else if (command === "get_position") {
     (async () => {
-        await getPositionOrca(args[1]);
+        //await getPositionOrca(args[1]);
+        await withRetry(() => getPositionOrca(args[1]), 3, 2000);
         process.exit(0);
     })();
 } else if (command === "status") {
     (async () => {
-        await getMarketStatusOrca(args[1]);
+        //await getMarketStatusOrca(args[1]);
+        await withRetry(() => getMarketStatusOrca(args[1]), 3, 2000);
         process.exit(0);
     })();
 }

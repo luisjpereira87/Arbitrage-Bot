@@ -63,7 +63,7 @@ class MeteoraClient:
         """
         return status
 
-    async def get_position(self) -> (PositionStatus | None):
+    async def get_position_(self) -> (PositionStatus | None):
         data = await self._execute_async(["get_position", self.pool_config.address])
         if not data.get("exists"):
             return None
@@ -82,6 +82,46 @@ class MeteoraClient:
             "pnlUsd": float(data.get("pnlUsd", 0.0)),
         }
         return PositionStatus(**status_data)
+
+    async def get_position(self, max_retries=3, delay=2) -> (PositionStatus | None):
+        for attempt in range(1, max_retries + 1):
+            try:
+                data = await self._execute_async(["get_position", self.pool_config.address])
+
+                # Se a resposta vier vazia ou falhar a estrutura básica, tratamos como None mas repetimos se for erro de rede
+                if not data or not data.get("exists"):
+                    # Se for apenas porque a posição não existe mesmo, podes querer retornar logo None,
+                    # mas logo após a abertura, se vier falso/nulo por atraso do RPC, o retry ajuda.
+                    # Vamos assumir que se data for None (falha de RPC), repetimos.
+                    if data is None and attempt < max_retries:
+                        print(f"Tentativa {attempt}: Resposta nula do RPC. A tentar novamente...")
+                        await asyncio.sleep(delay * attempt)
+                        continue
+                    return None
+
+                status_data = {
+                    "exists": data.get("exists"),
+                    "address": data.get("address"),
+                    "inRange": data.get("inRange"),
+                    "activeBin": int(data.get("activeBin", 0)),
+                    "lowerBin": int(data.get("lowerBin", 0)),
+                    "upperBin": int(data.get("upperBin", 0)),
+                    "lowerPrice": float(data.get("lowerPrice", 0.0)),
+                    "upperPrice": float(data.get("upperPrice", 0.0)),
+                    "size": float(data.get("size", 0.0)),
+                    "totalXAmount": float(data.get("totalXAmount", 0.0)),
+                    "totalYAmount": float(data.get("totalYAmount", 0.0)),
+                    "pnlUsd": float(data.get("pnlUsd", 0.0)),
+                }
+                return PositionStatus(**status_data)
+
+            except Exception as e:
+                print(f"Tentativa {attempt} falhou ao obter posição: {e}")
+                if attempt == max_retries:
+                    raise
+                await asyncio.sleep(delay * attempt)
+
+        return None
 
     async def get_last_position(self) -> (PositionStatus | None):
         data = await self._execute_async(["get_last_position", self.pool_config.address])
