@@ -670,8 +670,8 @@ async function getPositionOrca(poolAddress) {
 async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            await asyncFn;
-            process.exit(0);
+            // CORRIGIDO: Usa parênteses para executar a função e devolve o resultado
+            return await asyncFn(); 
         } catch (error) {
             console.log(JSON.stringify({
                 status: "RETRY_WARNING",
@@ -681,15 +681,13 @@ async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
             }));
 
             if (attempt === maxRetries) {
-
                 console.log(JSON.stringify({
                     status: "RETRY_ERROR",
                     attempt: attempt,
                     maxRetries: maxRetries,
-                    message: `Falha temporária detetada: ${error.message}`
+                    message: `Esgotadas as tentativas. Erro final: ${error.message}`
                 }));
                 throw new Error(`Esgotadas as ${maxRetries} tentativas. Erro final: ${error.message}`);
-                process.exit(1);
             }
 
             await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
@@ -739,7 +737,19 @@ if (command === "open") {
         process.exit(0);
     })();
     **/
-    withRetry(getPositionOrca(args[1]), 3, 2000);
+    (async () => {
+        try {
+            // Passamos como callback: () => getPositionOrca(...)
+            const position = await withRetry(() => getPositionOrca(args[1]), 3, 2000);
+            
+            // Imprime os dados REAIS da posição para o Python ler
+            console.log(JSON.stringify(position));
+            process.exit(0);
+        } catch (err) {
+            console.error(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
+            process.exit(1); // Informa o Python que o RPC falhou de vez
+        }
+    })();
 } else if (command === "status") {
     /**
     (async () => {
@@ -748,5 +758,17 @@ if (command === "open") {
         process.exit(0);
     })();
     **/
-    withRetry(getMarketStatusOrca(args[1]), 3, 2000);
+    (async () => {
+        try {
+            // Passamos como callback: () => getMarketStatusOrca(...)
+            const status = await withRetry(() => getMarketStatusOrca(args[1]), 3, 2000);
+            
+            // Imprime os dados REAIS de mercado/saldos para o Python ler
+            console.log(JSON.stringify(status));
+            process.exit(0);
+        } catch (err) {
+            console.error(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
+            process.exit(1); // Informa o Python que o RPC falhou de vez
+        }
+    })();
 }
