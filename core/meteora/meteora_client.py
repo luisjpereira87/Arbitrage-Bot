@@ -22,11 +22,30 @@ class MeteoraClient:
             # Lê o output e espera o processo acabar, mas de forma mais direta
             stdout, stderr = await process.communicate()
 
-            #print(stdout.decode())
-            print(stderr.decode())
+            stdout_str = stdout.decode().strip()
+            stderr_str = stderr.decode().strip()
+            # IMPRESSÃO DE SEGURANÇA: Se o comando falhar, imprimimos o output bruto no log do Python/Railway
+            if process.returncode != 0 or stderr_str:
+                print(f"--- DEBUG NODE STDOUT --- \n{stdout_str}")
+                print(f"--- DEBUG NODE STDERR --- \n{stderr_str}")
+
+            # print(stdout.decode())
+            # print(stderr.decode())
             # Se o Node.js estiver a enviar logs inúteis, isso pode estar a atrasar.
             # Garante que só tens o JSON na saída.
-            return self.extract_json_response(stdout.decode())
+            data = self.extract_json_response(stdout_str)
+
+            # 1. Valida se a resposta é um dicionário
+            if not isinstance(data, dict):
+                raise ValueError(f"Resposta inválida do Node.js (não é JSON): {stdout_str}")
+
+            # 2. Verifica se existe algum erro crítico ("ERROR", "RETRY_ERROR", etc.)
+            status_str = str(data.get("status", "")).upper()
+            if "ERROR" in status_str:
+                error_msg = data.get("message", "Falha crítica no Node.js ou RPC indisponível.")
+                raise ValueError(f"Erro detetado no Node.js: {error_msg}")
+
+            return data
 
         except Exception as e:
             return {"status": "ERROR", "message": str(e)}
@@ -49,9 +68,6 @@ class MeteoraClient:
     async def get_status(self) -> MarketStatus:
         data = await self._execute_async(["status", self.pool_config.address])
 
-        if data.get("status") == "RETRY_ERROR":
-            raise ValueError("A posição não foi encontrada ou o RPC falhou.")
-        
         # print(f"DEBUG: JSON recebido do Node.js: {data}")
         status = MarketStatus(
             sol_balance=float(data["balances"]["SOL"]),
@@ -69,9 +85,6 @@ class MeteoraClient:
 
     async def get_position(self) -> (PositionStatus | None):
         data = await self._execute_async(["get_position", self.pool_config.address])
-
-        if data.get("status") == "RETRY_ERROR":
-            raise ValueError("A posição não foi encontrada ou o RPC falhou.")
 
         if not data.get("exists"):
             return None
