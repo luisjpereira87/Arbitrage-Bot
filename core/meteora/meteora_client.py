@@ -48,6 +48,10 @@ class MeteoraClient:
     # Mapeamento dos métodos
     async def get_status(self) -> MarketStatus:
         data = await self._execute_async(["status", self.pool_config.address])
+
+        if data.get("status") == "RETRY_ERROR":
+            raise ValueError("A posição não foi encontrada ou o RPC falhou.")
+        
         # print(f"DEBUG: JSON recebido do Node.js: {data}")
         status = MarketStatus(
             sol_balance=float(data["balances"]["SOL"]),
