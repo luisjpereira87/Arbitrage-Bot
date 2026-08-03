@@ -461,15 +461,15 @@ async function getMarketStatusOrca(poolAddress) {
             }
         };
 
-        console.log(JSON.stringify(statusReport));
+        //console.log(JSON.stringify(statusReport));
         //process.exit(0);
-
+        return statusReport;
     } catch (error) {
         const errorReport = {
             status: "ERROR",
             message: error.message
         };
-        console.log(JSON.stringify(errorReport));
+        //console.log(JSON.stringify(errorReport));
         throw error;
         //process.exit(1);
     }
@@ -500,8 +500,9 @@ async function getTokenInfo(tokenMintA, tokenMintB){
         };
 
     } catch (error) {
-        console.error("Erro ao ir buscar dados da API de informação de token:", error.message);
-        return null;
+        //console.error("Erro ao ir buscar dados da API de informação de token:", error.message);
+        throw new Error("Erro ao ir buscar dados da API de informação de token:", error.message);
+        //return null;
     }
 }
 
@@ -615,7 +616,7 @@ async function getPositionOrca(poolAddress) {
             }
         } catch (e) {
             // Mantém os valores estáticos
-             console.log(JSON.stringify({ status: "ERROR", message: e.message }));
+             //console.log(JSON.stringify({ status: "ERROR", message: e.message }));
         }
 
         // 1. Totais reais (Tokens principais + Taxas pendentes)
@@ -657,11 +658,11 @@ async function getPositionOrca(poolAddress) {
             pnlUsd: Number(pnlUsd.toFixed(2)),
             pnlPercentage: Number(pnlPercentage.toFixed(2))
         }
-        console.log(JSON.stringify(result));
+        //console.log(JSON.stringify(result));
         return result;
 
     } catch (error) {
-        console.log(JSON.stringify({ status: "ERROR", message: error.message }));
+        //console.log(JSON.stringify({ status: "ERROR", message: error.message }));
         throw error;
         //return null;
     }
@@ -712,7 +713,7 @@ async function handleAction(promise, poolAddress, successStatus) {
         console.log(JSON.stringify({ status: successStatus }));
         process.exit(0);
     } catch (err) {
-        console.error(JSON.stringify({ status: "ERROR", message: err.message }));
+        console.log(JSON.stringify({ status: "ERROR", message: err.message }));
         process.exit(1);
     }
 }
@@ -746,7 +747,7 @@ if (command === "open") {
             console.log(JSON.stringify(position));
             process.exit(0);
         } catch (err) {
-            console.error(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
+            console.log(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
             process.exit(1); // Informa o Python que o RPC falhou de vez
         }
     })();
@@ -767,7 +768,7 @@ if (command === "open") {
             console.log(JSON.stringify(status));
             process.exit(0);
         } catch (err) {
-            console.error(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
+            console.log(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
             process.exit(1); // Informa o Python que o RPC falhou de vez
         }
     })();
