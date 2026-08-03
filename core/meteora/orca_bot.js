@@ -690,19 +690,13 @@ async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
             // CORRIGIDO: Usa parênteses para executar a função e devolve o resultado
             return await asyncFn(); 
         } catch (error) {
-            console.log(JSON.stringify({
-                status: "RETRY_WARNING",
-                attempt: attempt,
-                maxRetries: maxRetries,
-                message: `Falha temporária detetada: ${error.message}`
-            }));
-
-            if (attempt === maxRetries) {
+            if (attempt < maxRetries) {
+                console.error(`⚠️ [Retry ${attempt}/${maxRetries}] Falha temporária: ${error.message}. A tentar novamente...`);
+            } else {
+                // Só quando esgotam todas é que enviamos o JSON estruturado fatal para o Python
                 console.log(JSON.stringify({
-                    status: "RETRY_ERROR",
-                    attempt: attempt,
-                    maxRetries: maxRetries,
-                    message: `Esgotadas as tentativas. Erro final: ${error.message}`
+                    status: "ERROR",
+                    message: `Esgotadas as ${maxRetries} tentativas. Erro final: ${error.message}`
                 }));
                 throw new Error(`Esgotadas as ${maxRetries} tentativas. Erro final: ${error.message}`);
             }
