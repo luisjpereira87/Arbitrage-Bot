@@ -670,7 +670,8 @@ async function getPositionOrca(poolAddress) {
 async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            return await asyncFn();
+            await asyncFn;
+            process.exit(0);
         } catch (error) {
             console.log(JSON.stringify({
                 status: "RETRY_WARNING",
@@ -688,6 +689,7 @@ async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
                     message: `Falha temporária detetada: ${error.message}`
                 }));
                 throw new Error(`Esgotadas as ${maxRetries} tentativas. Erro final: ${error.message}`);
+                process.exit(1);
             }
 
             await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
@@ -730,15 +732,21 @@ if (command === "open") {
 } else if (command === "close") {
     handleAction(closeAllPoolPositionsAndSettleOrca(args[1]), args[1], "SUCCESS_CLOSE_ALL");
 } else if (command === "get_position") {
+    /**
     (async () => {
         //await getPositionOrca(args[1]);
         await withRetry(() => getPositionOrca(args[1]), 3, 2000);
         process.exit(0);
     })();
+    **/
+    withRetry(getPositionOrca(args[1]), 3, 2000);
 } else if (command === "status") {
+    /**
     (async () => {
         //await getMarketStatusOrca(args[1]);
         await withRetry(() => getMarketStatusOrca(args[1]), 3, 2000);
         process.exit(0);
     })();
+    **/
+    withRetry(getMarketStatusOrca(args[1]), 3, 2000);
 }
