@@ -27,6 +27,22 @@ const { address, createSolanaRpc, createKeyPairSignerFromBytes } = require("@sol
 
 const { PriceMath } = require("@orca-so/whirlpools-core");
 
+// --- INTERCEPTOR GLOBAL DE ERROS (Colocar no topo absoluto) ---
+process.on('uncaughtException', (err) => {
+    console.log(JSON.stringify({
+        status: "ERROR",
+        message: `Uncaught Exception: ${err.message}`
+    }));
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.log(JSON.stringify({
+        status: "ERROR",
+        message: `Unhandled Rejection: ${reason.message || reason}`
+    }));
+    process.exit(1);
+});
 
 // =====================================================================
 // 1. CARREGAMENTO ROBUSTO DO .ENV & IMPORTAÇÕES DINÂMICAS
