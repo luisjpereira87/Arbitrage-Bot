@@ -12,7 +12,7 @@ class MeteoraClient:
 
     async def _execute_async(self, args):
         try:
-            full_command = ["node", self.script_path] + args
+            full_command = ["node", "--no-warnings", self.script_path] + args
             process = await asyncio.create_subprocess_exec(
                 *full_command,
                 stdout=asyncio.subprocess.PIPE,
