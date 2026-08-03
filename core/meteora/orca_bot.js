@@ -281,11 +281,11 @@ async function calculateOrcaRangeMetrics(currentPrice, rangePercent, whirlpoolDa
 async function openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPrice, rangeWidthPercent) {
 
     //position = await getPositionOrca(poolAddress);
-    position = await withRetry(() => getPositionOrca(poolAddress), 3, 2000);
+   /** position = await withRetry(() => getPositionOrca(poolAddress), 3, 2000);
 
     if (position){
         throw new Error("Existe uma posição aberta...");
-    }
+    }**/
 
     const signer = await setEnvAndLoadWallet();
 
