@@ -772,37 +772,26 @@ async function waitForState(actionFn, checkStateFn, targetExists, maxAttempts = 
 const args = process.argv.slice(2);
 const command = args[0];
 
-if (command === "open") {
-
-    /**
-    await waitForState(
-        async () => await openBalancedPositionOrca(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4]),
-        async () => await getPositionOrca(args[1]),
-        true // Queremos que a posição PASSE a existir
-    );
-    **/
-    await handleAction(
-        async () => {
-            await waitForState(
-                async () => await openBalancedPositionOrca(
-                    args[1],
-                    parseFloat(args[2]),
-                    parseFloat(args[3]),
-                    parseFloat(args[4])
-                ),
-                async () => await getPositionOrca(args[1]),
-                true // Queremos que a posição PASSE a existir
-            );
-            return true; // Garante que devolve true para o handleAction se o waitForState concluir sem lançar erro
-        },
-        args[1],
-        "SUCCESS_OPEN_BALANCE_POSITION"
-    );
-
-
-    //handleAction(openBalancedPositionOrca(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_OPEN_BALANCE_POSITION");
-} if (command === "rebalance") {
-
+async function main() {
+    if (command === "open") {
+        await handleAction(
+            async () => {
+                await waitForState(
+                    async () => await openBalancedPositionOrca(
+                        args[1],
+                        parseFloat(args[2]),
+                        parseFloat(args[3]),
+                        parseFloat(args[4])
+                    ),
+                    async () => await getPositionOrca(args[1]),
+                    true
+                );
+                return true;
+            },
+            args[1],
+            "SUCCESS_OPEN_BALANCE_POSITION"
+        );
+    } else if (command === "rebalance") {
         await handleAction(
             async () => {
                 await waitForState(
@@ -813,18 +802,14 @@ if (command === "open") {
                         parseFloat(args[4])
                     ),
                     async () => await getPositionOrca(args[1]),
-                    true // Queremos que a posição PASSE a existir
+                    true
                 );
-                return true; // Garante que devolve true para o handleAction se o waitForState concluir sem lançar erro
+                return true;
             },
             args[1],
             "SUCCESS_REBALANCE_POSITION"
         );
-
-
-    //handleAction(rebalancePositionByStrategy(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_REBALANCE_POSITION");
-} else if (command === "close") {
-
+    } else if (command === "close") {
         await handleAction(
             async () => {
                 await waitForState(
@@ -833,44 +818,29 @@ if (command === "open") {
                         try {
                             return await getPositionOrca(args[1]);
                         } catch (e) {
-                            return null; // Se der erro a ler, é porque a posição já foi eliminada com sucesso
+                            return null;
                         }
                     },
-                    false // ✅ Correto: Queremos que a posição DEIXE de existir
+                    false
                 );
                 return true;
             },
             args[1],
             "SUCCESS_CLOSE_ALL"
         );
-
-    //handleAction(closeAllPoolPositionsAndSettleOrca(args[1]), args[1], "SUCCESS_CLOSE_ALL");
-} else if (command === "get_position") {
-    (async () => {
-        try {
-            // Passamos como callback: () => getPositionOrca(...)
-            const position = await withRetry(() => getPositionOrca(args[1]), 3, 2000);
-            
-            // Imprime os dados REAIS da posição para o Python ler
-            console.log(JSON.stringify(position));
-            process.exit(0);
-        } catch (err) {
-            console.log(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
-            process.exit(1); // Informa o Python que o RPC falhou de vez
-        }
-    })();
-} else if (command === "status") {
-    (async () => {
-        try {
-            // Passamos como callback: () => getMarketStatusOrca(...)
-            const status = await withRetry(() => getMarketStatusOrca(args[1]), 3, 2000);
-            
-            // Imprime os dados REAIS de mercado/saldos para o Python ler
-            console.log(JSON.stringify(status));
-            process.exit(0);
-        } catch (err) {
-            console.log(JSON.stringify({ status: "RETRY_ERROR", message: err.message }));
-            process.exit(1); // Informa o Python que o RPC falhou de vez
-        }
-    })();
+    } else if (command === "get_position") {
+        const position = await withRetry(() => getPositionOrca(args[1]), 3, 2000);
+        console.log(JSON.stringify(position));
+        process.exit(0);
+    } else if (command === "status") {
+        const status = await withRetry(() => getMarketStatusOrca(args[1]), 3, 2000);
+        console.log(JSON.stringify(status));
+        process.exit(0);
+    }
 }
+
+// Executa a função e apanha erros globais sem disparar o SyntaxError do Node.js
+main().catch(err => {
+    console.log(JSON.stringify({ status: "ERROR", message: err.message }));
+    process.exit(1);
+});
