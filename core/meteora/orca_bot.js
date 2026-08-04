@@ -334,6 +334,8 @@ async function openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPr
         : 10_000_000; // Buffer base para contas e metadados se o Token A não for SOL
 
     const gasOk = await ensureGasTracker(currentPrice, estimatedLamportsNeeded);
+    console.log("⏳ A aguardar 3 segundos para propagação do saldo de SOL...");
+    await new Promise(resolve => setTimeout(resolve, 3000));
     if (!gasOk) {
         throw new Error("Falha no reabastecimento de gás/rent (ensureGasTracker falhou na Orca).");
     }
@@ -728,6 +730,42 @@ async function handleAction(promise, poolAddress, successStatus) {
     }
 }
 
+async function waitForState(actionFn, checkStateFn, targetExists, maxAttempts = 5, delayMs = 6000) {
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+        attempts++;
+        try {
+            // 1. Executa a ação (caso ainda não tenha sido executada com sucesso)
+            if (attempts === 1) {
+                console.log(`🚀 [Ação] A executar transação (Tentativa ${attempts})...`);
+                await actionFn();
+            } else {
+                console.log(`🔄 [Ação] Re-tentando transação (Tentativa ${attempts})...`);
+                await actionFn();
+            }
+        } catch (error) {
+            console.warn(`⚠️ [Aviso] A transação falhou na tentativa ${attempts}: ${error.message}`);
+        }
+
+        // 2. Valida o estado real na blockchain
+        console.log(`🔍 [Estado] A verificar on-chain se a posição ${targetExists ? 'existe' : 'foi fechada'}...`);
+        const position = await checkStateFn();
+        const exists = position !== null && position !== undefined;
+
+        // 3. Compara com o objetivo desejado
+        if (exists === targetExists) {
+            console.log(`✅ [Sucesso] Estado desejado atingido com sucesso na blockchain!`);
+            return true;
+        }
+
+        console.log(`⏳ [Espera] O estado ainda não reflete o desejado. A aguardar ${delayMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    throw new Error(`❌ [Erro Crítico] O estado desejado (posição existir: ${targetExists}) não foi confirmado após ${maxAttempts} tentativas.`);
+}
+
 // =====================================================================
 // 6. TERMINAL ROUTER (CLI INTERFACE)
 // =====================================================================
@@ -735,19 +773,79 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 if (command === "open") {
-    handleAction(openBalancedPositionOrca(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_OPEN_BALANCE_POSITION");
-} if (command === "rebalance") {
-    handleAction(rebalancePositionByStrategy(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_REBALANCE_POSITION");
-} else if (command === "close") {
-    handleAction(closeAllPoolPositionsAndSettleOrca(args[1]), args[1], "SUCCESS_CLOSE_ALL");
-} else if (command === "get_position") {
+
     /**
-    (async () => {
-        //await getPositionOrca(args[1]);
-        await withRetry(() => getPositionOrca(args[1]), 3, 2000);
-        process.exit(0);
-    })();
+    await waitForState(
+        async () => await openBalancedPositionOrca(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4]),
+        async () => await getPositionOrca(args[1]),
+        true // Queremos que a posição PASSE a existir
+    );
     **/
+    await handleAction(
+        async () => {
+            await waitForState(
+                async () => await openBalancedPositionOrca(
+                    args[1],
+                    parseFloat(args[2]),
+                    parseFloat(args[3]),
+                    parseFloat(args[4])
+                ),
+                async () => await getPositionOrca(args[1]),
+                true // Queremos que a posição PASSE a existir
+            );
+            return true; // Garante que devolve true para o handleAction se o waitForState concluir sem lançar erro
+        },
+        args[1],
+        "SUCCESS_OPEN_BALANCE_POSITION"
+    );
+
+
+    //handleAction(openBalancedPositionOrca(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_OPEN_BALANCE_POSITION");
+} if (command === "rebalance") {
+
+        await handleAction(
+            async () => {
+                await waitForState(
+                    async () => await rebalancePositionByStrategy(
+                        args[1],
+                        parseFloat(args[2]),
+                        parseFloat(args[3]),
+                        parseFloat(args[4])
+                    ),
+                    async () => await getPositionOrca(args[1]),
+                    true // Queremos que a posição PASSE a existir
+                );
+                return true; // Garante que devolve true para o handleAction se o waitForState concluir sem lançar erro
+            },
+            args[1],
+            "SUCCESS_REBALANCE_POSITION"
+        );
+
+
+    //handleAction(rebalancePositionByStrategy(args[1], parseFloat(args[2]), parseFloat(args[3]), parseFloat(args[4])), args[1], "SUCCESS_REBALANCE_POSITION");
+} else if (command === "close") {
+
+        await handleAction(
+            async () => {
+                await waitForState(
+                    async () => await closeAllPoolPositionsAndSettleOrca(args[1]),
+                    async () => {
+                        try {
+                            return await getPositionOrca(args[1]);
+                        } catch (e) {
+                            return null; // Se der erro a ler, é porque a posição já foi eliminada com sucesso
+                        }
+                    },
+                    false // ✅ Correto: Queremos que a posição DEIXE de existir
+                );
+                return true;
+            },
+            args[1],
+            "SUCCESS_CLOSE_ALL"
+        );
+
+    //handleAction(closeAllPoolPositionsAndSettleOrca(args[1]), args[1], "SUCCESS_CLOSE_ALL");
+} else if (command === "get_position") {
     (async () => {
         try {
             // Passamos como callback: () => getPositionOrca(...)
@@ -762,13 +860,6 @@ if (command === "open") {
         }
     })();
 } else if (command === "status") {
-    /**
-    (async () => {
-        //await getMarketStatusOrca(args[1]);
-        await withRetry(() => getMarketStatusOrca(args[1]), 3, 2000);
-        process.exit(0);
-    })();
-    **/
     (async () => {
         try {
             // Passamos como callback: () => getMarketStatusOrca(...)

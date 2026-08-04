@@ -211,7 +211,7 @@ class DeltaNeutralSniperBot:
         total_pnl = (hl_pnl + meteora_pnl - self.hyperliquid_fees)
 
         # Novo target de lucro ajustado para a nova estratégia (0.2%)
-        PROFIT_TARGET = self.total_usdc_capital * 0.002
+        PROFIT_TARGET = self.total_usdc_capital * 0.005
 
         # Se atingiu a meta de lucro, fecha independentemente de estar dentro ou fora
         if total_pnl >= PROFIT_TARGET:
@@ -246,7 +246,7 @@ class DeltaNeutralSniperBot:
                 self.out_of_range_since = None
                 return True
             """
-            
+
             # Calcular a distância percentual ao limite para definir a urgência do timer
             distance_pct = await self.hl_client.get_range_distance_percentage(min_price, max_price)
 
