@@ -422,13 +422,7 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
         console.log("🧹 A fechar posição antiga com verificação de estado...");
         await waitForState(
             async () => await closeAllPoolPositionsAndSettleOrca(poolAddress),
-            async () => {
-                try {
-                    return await getPositionOrca(poolAddress);
-                } catch (e) {
-                    return null; // Se der erro a ler, é porque já foi eliminada com sucesso
-                }
-            },
+            async () => await getPositionOrca(poolAddress),
             false // Queremos que a posição DEIXE de existir
         );
 
@@ -829,13 +823,7 @@ async function main() {
             async () => {
                 await waitForState(
                     async () => await closeAllPoolPositionsAndSettleOrca(args[1]),
-                    async () => {
-                        try {
-                            return await getPositionOrca(args[1]);
-                        } catch (e) {
-                            return null;
-                        }
-                    },
+                    async () => await getPositionOrca(args[1]),
                     false
                 );
                 return true;
