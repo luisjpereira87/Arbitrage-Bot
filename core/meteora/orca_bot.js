@@ -418,19 +418,37 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
     console.log("DEBUG: Executando estratégia de Rebalanceamento via Fecho/Abertura...");
 
     try {
-        // 1. Fecha a posição atual
-        console.log("🧹 A fechar posição antiga...");
-        await closeAllPoolPositionsAndSettleOrca(poolAddress);
+        // 1. FECHO BLINDADO: Garante on-chain que a posição deixou de existir
+        console.log("🧹 A fechar posição antiga com verificação de estado...");
+        await waitForState(
+            async () => await closeAllPoolPositionsAndSettleOrca(poolAddress),
+            async () => {
+                try {
+                    return await getPositionOrca(poolAddress);
+                } catch (e) {
+                    return null; // Se der erro a ler, é porque já foi eliminada com sucesso
+                }
+            },
+            false // Queremos que a posição DEIXE de existir
+        );
 
-        // 2. Abre nova posição no novo range (Preço atualizado)
-        console.log("🚀 A abrir nova posição no novo range...");
-        await openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars);
+        // Pequena pausa de segurança entre o fecho e a nova abertura para propagação de saldos
+        console.log("⏳ Posição fechada confirmada. A aguardar 3s para reabertura...");
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        console.log("✅ Rebalanceamento concluído com sucesso (via Close/Open).");
+        // 2. ABERTURA BLINDADA: Garante on-chain que a nova posição passou a existir
+        console.log("🚀 A abrir nova posição no novo range com verificação de estado...");
+        await waitForState(
+            async () => await openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars),
+            async () => await getPositionOrca(poolAddress),
+            true // Queremos que a posição PASSE a existir
+        );
+
+        console.log("✅ Rebalanceamento concluído com sucesso e validado on-chain.");
         return true;
     } catch (error) {
-        console.error("❌ Erro no Rebalanceamento:", error.message);
-        throw error; // O router irá apanhar isto e imprimir o status: ERROR
+        console.error("❌ Erro Crítico no Rebalanceamento:", error.message);
+        throw error; // O router apanha e envia o status ERROR para o Python
     }
 }
 
@@ -794,15 +812,12 @@ async function main() {
     } else if (command === "rebalance") {
         await handleAction(
             async () => {
-                await waitForState(
-                    async () => await rebalancePositionByStrategy(
-                        args[1],
-                        parseFloat(args[2]),
-                        parseFloat(args[3]),
-                        parseFloat(args[4])
-                    ),
-                    async () => await getPositionOrca(args[1]),
-                    true
+                // Chama a função robusta que já tem os dois waitForState lá dentro (fecho e abertura)
+                await rebalancePositionByStrategy(
+                    args[1],
+                    parseFloat(args[2]),
+                    parseFloat(args[3]),
+                    parseFloat(args[4])
                 );
                 return true;
             },
