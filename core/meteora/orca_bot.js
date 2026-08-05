@@ -742,7 +742,7 @@ async function handleAction(actionFn, poolAddress, successStatus) {
     }
 }
 
-async function waitForState(actionFn, checkStateFn, targetExists, maxAttempts = 5, delayMs = 6000) {
+async function waitForState__(actionFn, checkStateFn, targetExists, maxAttempts = 5, delayMs = 6000) {
     let attempts = 0;
 
     while (attempts < maxAttempts) {
@@ -772,6 +772,58 @@ async function waitForState(actionFn, checkStateFn, targetExists, maxAttempts = 
         }
 
         console.log(`⏳ [Espera] O estado ainda não reflete o desejado. A aguardar ${delayMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    throw new Error(`❌ [Erro Crítico] O estado desejado (posição existir: ${targetExists}) não foi confirmado após ${maxAttempts} tentativas.`);
+}
+
+async function waitForState(actionFn, checkStateFn, targetExists, maxAttempts = 5, delayMs = 6000) {
+    let attempts = 0;
+    let actionExecuted = false; // Controla se a transação já foi enviada
+
+    while (attempts < maxAttempts) {
+        attempts++;
+
+        // 1. Executa a ação APENAS na primeira tentativa (ou se falhou anteriormente)
+        if (!actionExecuted) {
+            try {
+                console.log(`🚀 [Ação] A enviar transação (Tentativa ${attempts})...`);
+                await actionFn();
+                actionExecuted = true; // Marca como enviada com sucesso
+            } catch (error) {
+                console.warn(`⚠️ [Aviso] A transação falhou na tentativa ${attempts}: ${error.message}`);
+                if (attempts === maxAttempts) {
+                    throw error; // Se esgotou as tentativas a enviar, rebenta
+                }
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                continue; // Passa para a próxima tentativa do ciclo de espera
+            }
+        } else {
+            console.log(`🔄 [Espera Ativa] Transação já enviada. A aguardar indexação pelo RPC (Tentativa ${attempts})...`);
+        }
+
+        // 2. Valida o estado real na blockchain
+        try {
+            console.log(`🔍 [Estado] A verificar on-chain se a posição ${targetExists ? 'existe' : 'foi fechada'}...`);
+            const position = await checkStateFn();
+            const exists = position !== null && position !== undefined;
+
+            // 3. Compara com o objetivo desejado
+            if (exists === targetExists) {
+                console.log(`✅ [Sucesso] Estado desejado atingido com sucesso na blockchain!`);
+                return true;
+            }
+        } catch (checkErr) {
+            // É normal o checkStateFn falhar (ex: getPositionOrca atirar erro se a posição não existir)
+            const exists = false;
+            if (exists === targetExists) {
+                console.log(`✅ [Sucesso] Estado desejado atingido com sucesso na blockchain!`);
+                return true;
+            }
+            console.log(`⏳ [Espera] O estado ainda não reflete o desejado (${checkErr.message}). A aguardar...`);
+        }
+
         await new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
