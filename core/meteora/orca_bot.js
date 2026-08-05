@@ -720,9 +720,9 @@ async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
     }
 }
 
-async function handleAction(promise, poolAddress, successStatus) {
+async function handleAction(actionFn, poolAddress, successStatus) {
     try {
-        await promise;
+        await actionFn();
         // Tenta limpar, mas não deixa o sucesso da operação depender da limpeza
         await new Promise(resolve => setTimeout(resolve, 5000));
         try {
