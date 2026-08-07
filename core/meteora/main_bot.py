@@ -398,6 +398,42 @@ class DeltaNeutralSniperBot:
                 logging.error("Meteora rebalance failed")
         return position
 
+    async def check_and_close_management(self, position: PositionStatus) -> PositionStatus | None:
+        if position is None or position.size != 1:
+            return position
+
+        lower_price = position.lowerPrice
+        upper_price = position.upperPrice
+
+        # 1. Verifica se o preço está fora do range de forma sustentada
+        is_outside = await self.is_price_outside_range_sustained(
+            lower_price,
+            upper_price,
+            300
+        )
+
+        if not is_outside:
+            # Se estiver dentro do range, mantém a gestão normal
+            return position
+
+        logging.warning("🚨 PREÇO FORA DO RANGE! A iniciar processo de fecho...")
+
+        # 2. Opcional: validações de mercado antes de fechar
+        if await self.should_wait_for_market():
+            # 3. Executa APENAS o fecho da posição e do hedge
+            is_closed = await self.close_position(position)
+
+            if is_closed:
+                logging.info("✅ Posição e hedge fechados com sucesso. Abertura agendada para o próximo loop.")
+                self.out_of_range_since = None
+                # Retorna None para indicar que a posição atual deixou de existir,
+                # permitindo que o próximo ciclo trate da nova abertura de forma isolada.
+                return None
+            else:
+                logging.error("❌ Falha ao fechar a posição neste ciclo.")
+
+        return position
+
     async def loop_management(self) -> PositionStatus | None:
         position = await self.meteora_client.get_position()
         """
@@ -431,7 +467,7 @@ class DeltaNeutralSniperBot:
             if is_closed:
                 return None
 
-        return await self.rebalanced_management(position)
+        return await self.check_and_close_management(position)
 
     async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
         # meteora_position = await self.meteora_client.get_position()
