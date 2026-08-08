@@ -158,7 +158,7 @@ class HlClient:
 
         return unrealized_pnl, balance, is_position
 
-    async def calculate_dynamic_range_width(self, limit=30, lookback=14, buffer=0.0):
+    async def calculate_dynamic_range_width(self, limit=30, lookback=14, buffer=0.0) -> float:
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=limit)
         range_percentage_raw = IndicatorsUtils.calculate_channel_width(ohlcv, lookback=lookback)
         print(range_percentage_raw)
@@ -172,7 +172,7 @@ class HlClient:
         float, float]:
         return await self.hl_exchange.get_perfect_quantities(capital_amount, dex_price, self.symbol)
 
-    async def is_market_turbulent(self, threshold=0.005):
+    async def is_market_turbulent(self, threshold=0.005) -> bool:
         # Obtém o dataframe
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=1)
 
@@ -184,7 +184,19 @@ class HlClient:
         amplitude = (high - low) / low
 
         is_turbulent = amplitude > threshold
-
-        # print(f"🔍 [Market Check] Amplitude: {amplitude:.6f} | Turbulento: {is_turbulent}")
-
         return is_turbulent
+
+    async def calculate_hedge_size_based_on_alpha(self, current_price: float, capital_amount: float, ) -> float:
+        # Buscar os últimos 14 candles de forma assíncrona
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=14)
+
+        # Assumindo que o DataFrame tem uma coluna chamada 'close'
+        recent_closes = ohlcv['close'].tail(5)  # ou usar os 14 todos, ex: ohlcv['close']
+        sma_recent = recent_closes.mean()
+
+        if current_price > sma_recent:
+            # Mercado acima da média recente -> tendência de alta de curto prazo
+            return capital_amount * 0.80
+        else:
+            # Mercado abaixo da média recente -> tendência de baixa
+            return capital_amount * 0.90

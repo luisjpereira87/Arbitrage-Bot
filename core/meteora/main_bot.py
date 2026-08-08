@@ -5,17 +5,14 @@ import sys
 import time
 from datetime import datetime
 
-from core.config.properties_multi import PropertiesMulti
 from core.meteora.dclass import PositionStatus, RangeStatus
 from core.meteora.hl_client import HlClient
 from core.meteora.meteora_client import MeteoraClient
 from core.meteora.pool_manager_dclass import PoolManager
-from core.web3.executors.solana_executor import SolanaExecutor
-from core.web3.rpcs.solana_manager import SolanaManager
 
 
 class DeltaNeutralSniperBot:
-    def __init__(self, usdc_min_hl: float, total_usdc_capital: float, sdk_file_path: str):
+    def __init__(self, usdc_min_hl: float, total_usdc_capital: float, profit_target_pct: float, sdk_file_path: str):
 
         base_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -38,19 +35,11 @@ class DeltaNeutralSniperBot:
                 f"❌ Falha: usdc_hl_leg {self.usdc_hl_leg} tem que ser maior que usdc_min_hl {self.usdc_min_hl}!")
             raise RuntimeError("Something bad happened")
 
-            # Variáveis geográficas que controlam os gatilhos (Preenchidas via Node.js)
-        # self.lower_price_bound = None
-        # self.upper_price_bound = None
-        # self.sol_short_size = None
-        # self.is_position_active = False
-
+        self.profit_target_pct = profit_target_pct
         self.pool_config = PoolManager().get("SOL/USDC-ORCA")
 
         self.meteora_client = MeteoraClient(self.js_script_path, self.pool_config)
         self.hl_client = HlClient()
-        solana_manager = SolanaManager()
-        properties = PropertiesMulti()
-        self.solana_executor = SolanaExecutor(solana_manager, properties)
 
         self.out_of_range_since = None
         self.last_log_time = 0
@@ -67,12 +56,29 @@ class DeltaNeutralSniperBot:
         fee_rate = 0.00025 + slippage_buffer
         self.hyperliquid_fees = max((self.usdc_hl_leg * fee_rate) * 2, 0.02)
 
-    async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
+    async def calculate_open_balance_old(self, price_token: float) -> tuple[float, float]:
         capital_para_hedge = self.total_usdc_capital / 2
         _, usdc_hl_leg = await self.hl_client.adjust_balance(capital_para_hedge, price_token)
         usdc_meteora = usdc_hl_leg * 2
 
         return usdc_meteora, usdc_hl_leg
+
+    async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
+        capital_para_hedge = self.total_usdc_capital / 2
+
+        # 1. Ajusta aos limites da exchange
+        _, capital_ajustado_hl = await self.hl_client.adjust_balance(capital_para_hedge, price_token)
+
+        # 2. A Meteora usa o capital cheio e original (sem o desconto do alpha)
+        usdc_meteora = capital_ajustado_hl * 2
+
+        # 3. Aplica o desconto do alpha APENAS para calcular o tamanho do short na Hyperliquid
+        final_usdc_hl_leg = await self.hl_client.calculate_hedge_size_based_on_alpha(price_token, capital_ajustado_hl)
+
+        # 4. Garante que o valor final com desconto ainda cumpre as regras da exchange
+        _, final_usdc_hl_leg_ajustado = await self.hl_client.adjust_balance(final_usdc_hl_leg, price_token)
+
+        return usdc_meteora, final_usdc_hl_leg_ajustado
 
     async def open_position(self, current_price: float, range_width: float) -> bool:
         try:
@@ -144,6 +150,7 @@ class DeltaNeutralSniperBot:
         sol_balance_strategy = 0
         usdc_balance_strategy = 0
         if position is not None:
+            # TODO ATUALIZAR NO SDK DA METEORA CONFORME ESTÁ NA ORCA
             sol_balance_strategy = position.totalXAmount  # / (10 ** self.pool_config.tokenX.decimals)
             usdc_balance_strategy = position.totalYAmount  # / (10 ** self.pool_config.tokenY.decimals)
 
@@ -151,57 +158,7 @@ class DeltaNeutralSniperBot:
 
         return usdc_balance_total_wallet + usdc_balance_total_strategy
 
-    async def is_price_outside_range_sustained_old(self, min_price: float, max_price: float,
-                                                   duration_seconds: int = 300) -> bool:
-
-        hl_pnl, _, _ = await self.hl_client.get_balance()
-        position_data = await self.meteora_client.get_position()
-        total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
-        PROFIT_TARGET = self.total_usdc_capital * 0.002
-
-        if total_pnl >= PROFIT_TARGET:
-            logging.info(f"✅ Preço atingiu a meta de 0.2%: {total_pnl:.2f}")
-            return True
-
-        status = await self.hl_client.check_range_status(min_price, max_price, self.range_margin_pct)
-
-        # 1. SE SAIU DO RANGE
-        if status == RangeStatus.OUT_UPPER or status == RangeStatus.OUT_LOWER:
-
-            if total_pnl > 0:
-                logging.warning(f"🚨 Preço fora do range mas pnl positivo: {total_pnl:.2f}, fecho imediato...")
-                self.out_of_range_since = None
-                return True
-
-            # Caso contrário, mantém o comportamento normal de esperar o timer
-            if self.out_of_range_since is None:
-                self.out_of_range_since = time.time()
-                logging.info(f"⚠️ Preço {status}. Iniciando timer de {duration_seconds / 60} min...")
-                return False
-
-            elapsed = time.time() - self.out_of_range_since
-            if elapsed >= duration_seconds:
-                logging.info(f"🚨 Tempo sustentado atingido. Rebalanceamento autorizado!")
-                return True
-
-            # Log periódico para não inundar a consola (a cada 20 segundos)
-            if time.time() - getattr(self, 'last_log_time', 0) > 20:
-                logging.info(f"⏳ Aguardando... Abaixo do range há {elapsed:.0f}s de {duration_seconds}s.")
-                self.last_log_time = time.time()
-
-            return False
-
-        # 2. SE VOLTOU PARA DENTRO
-        if status == RangeStatus.INSIDE:
-            if self.out_of_range_since is not None:
-                logging.info("✅ Preço voltou para dentro. Timer resetado.")
-                self.out_of_range_since = None
-            return False
-
-        return False
-
-    async def is_price_outside_range_sustained(self, min_price: float, max_price: float,
-                                               duration_seconds: int = 300) -> bool:
+    async def is_price_outside_range_sustained(self, min_price: float, max_price: float) -> bool:
 
         # 1. Obtenção de dados e cálculo do PnL total
         hl_pnl, _, _ = await self.hl_client.get_balance()
@@ -211,10 +168,10 @@ class DeltaNeutralSniperBot:
         total_pnl = (hl_pnl + meteora_pnl - self.hyperliquid_fees)
 
         # Novo target de lucro ajustado para a nova estratégia (0.2%)
-        PROFIT_TARGET = self.total_usdc_capital * 0.005
+        profit_target = self.total_usdc_capital * self.profit_target_pct
 
         # Se atingiu a meta de lucro, fecha independentemente de estar dentro ou fora
-        if total_pnl >= PROFIT_TARGET:
+        if total_pnl >= profit_target:
             logging.info(f"✅ Preço atingiu a meta de lucro de 0.2%: {total_pnl:.2f}")
             self.out_of_range_since = None
             return True
@@ -238,22 +195,13 @@ class DeltaNeutralSniperBot:
                 self.out_of_range_since = None
                 return True
 
-            """
-            # Verificar se o mercado está turbulento (anula o timer e fecha imediatamente)
-            is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
-            if is_turbulent:
-                logging.warning(f"🚨 Preço fora do range ({status}) + MERCADO TURBULENTO! Fecho imediato.")
-                self.out_of_range_since = None
-                return True
-            """
-
             # Calcular a distância percentual ao limite para definir a urgência do timer
             distance_pct = await self.hl_client.get_range_distance_percentage(min_price, max_price)
 
             if distance_pct >= 0.15:
-                dynamic_duration = 600  # Acima de 20% (ou mais longe)
+                dynamic_duration = 600  # Acima de 15% (ou mais longe)
             elif distance_pct >= 0.10:
-                dynamic_duration = 300  # Intervalo exato entre 0.20 e 0.10 faz 300s
+                dynamic_duration = 300  # Intervalo exato entre 0.15 e 0.10 faz 300s
             elif distance_pct >= 0.05:
                 dynamic_duration = 60  # Intervalo exato entre 0.10 e 0.05 faz 60s
             else:
@@ -287,69 +235,6 @@ class DeltaNeutralSniperBot:
 
         return False
 
-    async def is_price_outside_range_sustained__(self, min_price: float, max_price: float,
-                                                 duration_seconds: int = 300) -> bool:
-
-        """
-        hl_pnl, _, is_position = await self.hl_client.get_balance()
-        position_data = await self.meteora_client.get_position()
-        total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
-
-        if position_data is not None and is_position:
-            profit_pct = 0.004
-        elif position_data is None or is_position is False:
-            profit_pct = 0.002
-
-        PROFIT_TARGET = self.total_usdc_capital * profit_pct
-        """
-
-        # 1. Obtenção segura
-        hl_pnl, _, is_hl_active = await self.hl_client.get_balance()
-        position_data = await self.meteora_client.get_position()
-        is_meteora_active = position_data is not None
-
-        # 2. Cálculo do PnL
-        meteora_pnl = position_data.pnlUsd if is_meteora_active else 0.0
-        total_pnl = (hl_pnl + meteora_pnl - self.hyperliquid_fees)
-
-        # 3. Target dinâmico (mais seguro)
-        # Se ambas estão ativas = 0.4%, se apenas uma estiver = 0.2%
-        active_legs = (1 if is_hl_active else 0) + (1 if is_meteora_active else 0)
-        profit_pct = 0.004 if active_legs == 2 else 0.002
-        PROFIT_TARGET = self.total_usdc_capital * profit_pct
-
-        status_with_margin = await self.hl_client.check_range_status(min_price, max_price, self.range_margin_pct)
-        status_without_margin = await self.hl_client.check_range_status(min_price, max_price, 0.0)
-
-        # --- LÓGICA DE FECHO ANTECIPADO (Early Exit - 10% antes) ---
-
-        # --- LÓGICA DE FECHO FINAL (Hard Exit - No limite do range) ---
-
-        # Se saiu totalmente do range: Fecha TUDO o que ainda estiver aberto
-        if status_without_margin == RangeStatus.OUT_UPPER or status_without_margin == RangeStatus.OUT_LOWER:
-            logging.info("🛑 Preço fora do range total: Fecho final de tudo.")
-            await self.hl_client.close_position()
-            await self.meteora_client.close_all()
-            return True  # Aqui sim, terminamos a operação
-
-        # Se subiu e bateu no buffer: Fecha SÓ o Hedge (HL) e deixa a Meteora fluir
-        if status_with_margin == RangeStatus.OUT_UPPER:
-            logging.info("🚀 Buffer superior atingido: Fechando HL antecipadamente.")
-            await self.hl_client.close_position()
-            return False  # Retornamos False para o bot NÃO parar e deixar a Meteora continuar
-
-        # Se caiu e bateu no buffer: Fecha SÓ a Pool (Meteora) e deixa o Hedge fluir
-        if status_with_margin == RangeStatus.OUT_LOWER:
-            logging.info("📉 Buffer inferior atingido: Fechando Meteora antecipadamente.")
-            await self.meteora_client.close_all()
-            return False  # Retornamos False para o bot continuar a monitorizar o Hedge
-
-        if total_pnl >= PROFIT_TARGET:
-            logging.info(f"✅ Preço atingiu a meta de 0.4%: {total_pnl:.2f}")
-            return True
-
-        return False
-
     async def close_position(self, position: PositionStatus) -> bool:
         if position is not None:
             is_closed_meteora = await self.meteora_client.close_all()
@@ -372,8 +257,7 @@ class DeltaNeutralSniperBot:
 
         is_outside = await self.is_price_outside_range_sustained(
             lower_price,
-            upper_price,
-            300
+            upper_price
         )
 
         if is_outside:
@@ -408,8 +292,7 @@ class DeltaNeutralSniperBot:
         # 1. Verifica se o preço está fora do range de forma sustentada
         is_outside = await self.is_price_outside_range_sustained(
             lower_price,
-            upper_price,
-            300
+            upper_price
         )
 
         if not is_outside:
@@ -436,26 +319,7 @@ class DeltaNeutralSniperBot:
 
     async def loop_management(self) -> PositionStatus | None:
         position = await self.meteora_client.get_position()
-        """
-        hl_position = await self.hl_client.get_position()
 
-        if position is not None or hl_position is not None:
-
-            if position is None:
-                last_position = await self.meteora_client.get_last_position()
-                lower_price = last_position.lowerPrice
-                upper_price = last_position.upperPrice
-            else:
-                lower_price = position.lowerPrice
-                upper_price = position.upperPrice
-
-            is_outside = await self.is_price_outside_range_sustained(
-                lower_price,
-                upper_price,
-                300
-            )
-            return position
-        """
         if position is None:
             if not await self.should_wait_for_market():
                 return await self.open_position_management(position)
@@ -470,9 +334,6 @@ class DeltaNeutralSniperBot:
         return await self.check_and_close_management(position)
 
     async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
-        # meteora_position = await self.meteora_client.get_position()
-        # hl_position = await self.hl_client.get_position()
-
         if position is None:
             logging.info("A efetuar a abertura de posição...")
             market_status = await self.meteora_client.get_status()
@@ -489,14 +350,11 @@ class DeltaNeutralSniperBot:
         if now - last_heartbeat >= heartbeat_interval:
             formated_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # position_data = await self.meteora_client.get_position()
-            # Log único e informativo
             msg = f"💚 [SINAL DE VIDA] {formated_time}"
             if position_data:
                 wallet_balance = await self.get_balance(position_data)
                 hl_pnl, hl_balance, _ = await self.hl_client.get_balance()
                 total_pnl = (hl_pnl + position_data.pnlUsd - self.hyperliquid_fees)
-                # is_turbulent = await self.hl_client.is_market_turbulent()
                 msg += f" | Ativa: {position_data.address[:6]}... | Range: [{position_data.lowerPrice} - {position_data.upperPrice}] | Pnl: [Meteora: {position_data.pnlUsd:.2f}, Hyperliquid: {hl_pnl:.2f}, Total: {total_pnl:.2f}] | Balanço: [Wallet: {wallet_balance}, Hyperliquid: {hl_balance}]"
             else:
                 msg += " | Sem posição ativa."
@@ -572,7 +430,8 @@ logging.basicConfig(
 # =====================================================================
 if __name__ == "__main__":
     # Configuração de Arranque Inicial: Aloca $1000 USDC totais, com um range de 2 dólares de largura
-    bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24, sdk_file_path="orca_bot.js")
+    bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24, profit_target_pct=0.002,
+                                sdk_file_path="orca_bot.js")
     # bot.meteora_client.get_last_position()
 
     asyncio.run(bot.start_sniper_cycle())

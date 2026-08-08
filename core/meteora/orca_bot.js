@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const Decimal = require('decimal.js');
 const { buildAndSendTransaction } = require("@orca-so/tx-sender");
+const { executeWithRpcFallback } = require('./rpcManager');
 
 // Importações do SDK da Orca
 const {
@@ -57,11 +58,6 @@ if (fs.existsSync(envPath)) {
 // =====================================================================
 // 2. INFRASTRUCTURE & CONFIGURATION
 // =====================================================================
-const RPC_URL = "https://api.mainnet-beta.solana.com";
-const connection = new Connection(RPC_URL, 'confirmed');
-const rpc = createSolanaRpc(RPC_URL);
-const devnetRpc = createSolanaRpc("https://api.mainnet-beta.solana.com");
-
 let walletKeypair;
 try {
     const privateKeyStr = process.env.PRIVATE_KEY_WALLET_SOLANA;
@@ -80,32 +76,10 @@ try {
     process.exit(1);
 }
 
-async function loadWallet() {
-    const bs58Module = require('bs58');
-    let decodeFn = typeof bs58Module === 'function' ? bs58Module : (bs58Module.decode || bs58Module.default?.decode);
-    if (!decodeFn) decodeFn = anchor.utils.bytes.bs58.decode;
-
-    const privateKeyStr = process.env.PRIVATE_KEY_WALLET_SOLANA;
-    if (!privateKeyStr) {
-        throw new Error('PRIVATE_KEY_WALLET_SOLANA not set in .env');
-    }
-
-    const bytes = new Uint8Array(decodeFn(privateKeyStr.trim()));
-
-    // Se o createKeyPairSignerFromBytes está a retornar um formato incompatível com a v8,
-    // podes usar diretamente os bytes ou garantir que o import do createKeyPairSignerFromBytes
-    // vem exatamente da mesma versão do @solana/kit que a Orca está a usar nas dependências.
-    return await createKeyPairSignerFromBytes(bytes);
-}
-
 async function setEnvAndLoadWallet(){
-        // 1. Configurar o ambiente global exatamente como o exemplo faz
-        const rpcEndpoint = process.env.RPC_ENDPOINT_URL || "https://api.mainnet-beta.solana.com";
-        const rpc = createSolanaRpc(rpcEndpoint);
+    return await executeWithRpcFallback(async (rpcUrl) => {
+        await setRpc(rpcUrl);
 
-        await setRpc(rpcEndpoint);
-
-        // Carregar a private key em bytes a partir da tua variável de ambiente
         const bs58 = require('bs58');
         const decodeFn = bs58.decode || bs58.default?.decode;
 
@@ -115,10 +89,10 @@ async function setEnvAndLoadWallet(){
         const privateKeyBytes = new Uint8Array(decodeFn(process.env.PRIVATE_KEY_WALLET_SOLANA.trim()));
 
         const signer = await setPayerFromBytes(privateKeyBytes);
-        //setDefaultFunder(signer.address);
         console.log('Signer configurado:', signer.address);
 
-        return signer
+        return signer;
+    });
 }
 
 //const ownerAddress = "DpUwFAAarUjQGzAKFviSvvbtoVz28Pg2bTZ5kb17SBuJ";
@@ -131,16 +105,17 @@ async function setEnvAndLoadWallet(){
 
 
 const wallet = new Wallet(walletKeypair);
-const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
+//const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
 //const ctx = WhirlpoolContext.from(connection, wallet, anchor.web3.PublicKey.default); // O SDK deteta o programa Orca automaticamente
 //const client = buildWhirlpoolClient(ctx);
 const jupiterQuoteApi = createJupiterApiClient();
 
+/**
 const POOL_CONFIG = {
     address: "CeaZcxBNLpJWtxzt58qQmfMBtJY8pQLvursXTJYGQpbN", // Substitui pelo endereço da pool na Orca
     tokenX: { symbol: "SOL", decimals: 9 },
     tokenY: { symbol: "USDC", decimals: 6 }
-};
+};**/
 
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
@@ -150,115 +125,125 @@ const WSOL_MINT = "So11111111111111111111111111111111111111112";
 // =====================================================================
 
 async function executeJupiterSwap(inputMint, outputMint, amountInDecimals) {
-    try {
-        if (amountInDecimals <= 0) return false;
+    return await executeWithRpcFallback(async (rpcUrl) => {
+        try {
+            if (amountInDecimals <= 0) return false;
 
-        const quote = await jupiterQuoteApi.quoteGet({
-            inputMint: inputMint,
-            outputMint: outputMint,
-            amount: Math.round(amountInDecimals),
-            slippageBps: 50,
-        });
+            const connection = new Connection(rpcUrl, 'confirmed');
 
-        if (!quote) throw new Error("A Jupiter não conseguiu encontrar uma rota válida.");
+            const quote = await jupiterQuoteApi.quoteGet({
+                inputMint: inputMint,
+                outputMint: outputMint,
+                amount: Math.round(amountInDecimals),
+                slippageBps: 50,
+            });
 
-        const swapResult = await jupiterQuoteApi.swapPost({
-            swapRequest: {
-                quoteResponse: quote,
-                userPublicKey: wallet.publicKey.toBase58(),
-                wrapAndUnwrapSol: true,
-            },
-        });
+            if (!quote) throw new Error("A Jupiter não conseguiu encontrar uma rota válida.");
 
-        const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64');
-        const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
-        transaction.sign([walletKeypair]);
+            const swapResult = await jupiterQuoteApi.swapPost({
+                swapRequest: {
+                    quoteResponse: quote,
+                    userPublicKey: wallet.publicKey.toBase58(),
+                    wrapAndUnwrapSol: true,
+                },
+            });
 
-        const txid = await connection.sendTransaction(transaction, {
-            skipPreflight: true,
-            maxRetries: 2
-        });
+            const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64');
+            const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+            transaction.sign([walletKeypair]);
 
-        const latestBlockHash = await connection.getLatestBlockhash();
-        await connection.confirmTransaction({
-            blockhash: latestBlockHash.blockhash,
-            lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-            signature: txid
-        }, 'confirmed');
+            const txid = await connection.sendTransaction(transaction, {
+                skipPreflight: true,
+                maxRetries: 2
+            });
 
-        console.log(`🔄 [SDK Jupiter] Swap Concluído! TX: ${txid}`);
-        return true;
-    } catch (error) {
-        console.error(`❌ [SDK Jupiter] Falha ao executar o swap: ${error.message}`);
-        throw error;
-    }
+            const latestBlockHash = await connection.getLatestBlockhash();
+            await connection.confirmTransaction({
+                blockhash: latestBlockHash.blockhash,
+                lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+                signature: txid
+            }, 'confirmed');
+
+            console.log(`🔄 [SDK Jupiter] Swap Concluído! TX: ${txid}`);
+            return true;
+        } catch (error) {
+            console.error(`❌ [SDK Jupiter] Falha ao executar o swap: ${error.message}`);
+            throw error;
+        }
+    });
 }
 
 async function ensureGasTracker(currentPrice, totalNeededLamports) {
-    try {
-        const balanceLamports = await connection.getBalance(wallet.publicKey);
-        const MARGEM_SEGURANCA = 0.02 * 1_000_000_000;
-        const totalExigido = totalNeededLamports + MARGEM_SEGURANCA;
+    return await executeWithRpcFallback(async (rpcUrl) => {
+        try {
+            const connection = new Connection(rpcUrl, 'confirmed');
+            const balanceLamports = await connection.getBalance(wallet.publicKey);
+            const MARGEM_SEGURANCA = 0.02 * 1_000_000_000;
+            const totalExigido = totalNeededLamports + MARGEM_SEGURANCA;
 
-        if (balanceLamports < totalExigido) {
-            console.warn(`⚠️ [Gas Tracker] Saldo insuficiente. Faltam ${(totalExigido - balanceLamports) / 1e9} SOL.`);
-            const solFaltante = (totalExigido - balanceLamports) / 1_000_000_000;
-            const usdcToSpend = solFaltante * currentPrice * 1.05;
+            if (balanceLamports < totalExigido) {
+                console.warn(`⚠️ [Gas Tracker] Saldo insuficiente. Faltam ${(totalExigido - balanceLamports) / 1e9} SOL.`);
+                const solFaltante = (totalExigido - balanceLamports) / 1_000_000_000;
+                const usdcToSpend = solFaltante * currentPrice * 1.05;
 
-            const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
-            const usdcBalance = usdcAccounts.value.length > 0 ? usdcAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
+                const usdcAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(USDC_MINT) });
+                const usdcBalance = usdcAccounts.value.length > 0 ? usdcAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount : 0;
 
-            if (usdcToSpend > usdcBalance) {
-                console.error(`🚨 [Gas Tracker] USDC insuficiente! Precisas de ${usdcToSpend.toFixed(4)} USDC.`);
-                return false;
+                if (usdcToSpend > usdcBalance) {
+                    console.error(`🚨 [Gas Tracker] USDC insuficiente! Precisas de ${usdcToSpend.toFixed(4)} USDC.`);
+                    return false;
+                }
+
+                console.log(`🔄 Comprando ${solFaltante.toFixed(4)} SOL com ${usdcToSpend.toFixed(4)} USDC...`);
+                await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(usdcToSpend * 1_000_000));
+                await new Promise(r => setTimeout(r, 5000));
             }
-
-            console.log(`🔄 Comprando ${solFaltante.toFixed(4)} SOL com ${usdcToSpend.toFixed(4)} USDC...`);
-            await executeJupiterSwap(USDC_MINT, WSOL_MINT, Math.round(usdcToSpend * 1_000_000));
-            await new Promise(r => setTimeout(r, 5000));
+            return true;
+        } catch (error) {
+            console.error(`❌ [Gas Tracker] Erro: ${error.message}`);
+            return false;
         }
-        return true;
-    } catch (error) {
-        console.error(`❌ [Gas Tracker] Erro: ${error.message}`);
-        return false;
-    }
+    });
 }
 
 async function cleanupAndSettle(poolAddress, targetSolAmount = 0.02) {
-    try {
-        console.log(`🧹 [Cleaner] Iniciando consolidação (Alvo de SOL fixo: ${targetSolAmount} SOL)...`);
-        const solBalance = await connection.getBalance(wallet.publicKey);
-        const solBalanceUi = solBalance / 1_000_000_000;
-        const gasMargin = 0.005;
+    return await executeWithRpcFallback(async (rpcUrl) => {
+        try {
+            console.log(`🧹 [Cleaner] Iniciando consolidação (Alvo de SOL fixo: ${targetSolAmount} SOL)...`);
+            const connection = new Connection(rpcUrl, 'confirmed');
+            const solBalance = await connection.getBalance(wallet.publicKey);
+            const solBalanceUi = solBalance / 1_000_000_000;
+            const gasMargin = 0.005;
 
-        if (solBalanceUi > (targetSolAmount + gasMargin)) {
-            const excessoSol = solBalanceUi - targetSolAmount - gasMargin;
-            console.log(`🔄 [Cleaner] Consolidando excedente de SOL: ${excessoSol.toFixed(4)} SOL`);
-            await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, Math.round(excessoSol * 1_000_000_000));
-            await new Promise(r => setTimeout(r, 5000));
+            if (solBalanceUi > (targetSolAmount + gasMargin)) {
+                const excessoSol = solBalanceUi - targetSolAmount - gasMargin;
+                console.log(`🔄 [Cleaner] Consolidando excedente de SOL: ${excessoSol.toFixed(4)} SOL`);
+                await executeJupiterSwap("So11111111111111111111111111111111111111112", USDC_MINT, Math.round(excessoSol * 1_000_000_000));
+                await new Promise(r => setTimeout(r, 5000));
+            }
+
+            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+                programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+            });
+
+            for (const account of tokenAccounts.value) {
+                const parsedInfo = account.account.data.parsed.info;
+                const mint = parsedInfo.mint;
+                const amountRaw = parsedInfo.tokenAmount.amount;
+                const balance = parsedInfo.tokenAmount.uiAmount;
+
+                if (balance <= 0 || mint === USDC_MINT || mint === "So11111111111111111111111111111111111111112") continue;
+
+                console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
+                await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            return true;
+        } catch (error) {
+            console.error(`❌ [Cleaner] Erro: ${error.message}`);
+            return false;
         }
-
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-            programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-        });
-
-        for (const account of tokenAccounts.value) {
-            const parsedInfo = account.account.data.parsed.info;
-            const mint = parsedInfo.mint;
-            const amountRaw = parsedInfo.tokenAmount.amount;
-            const balance = parsedInfo.tokenAmount.uiAmount;
-
-            if (balance <= 0 || mint === USDC_MINT || mint === "So11111111111111111111111111111111111111112") continue;
-
-            console.log(`🔄 [Cleaner] Consolidando token ${mint}: ${balance}...`);
-            await executeJupiterSwap(mint, USDC_MINT, parseInt(amountRaw));
-            await new Promise(r => setTimeout(r, 5000));
-        }
-        return true;
-    } catch (error) {
-        console.error(`❌ [Cleaner] Erro: ${error.message}`);
-        return false;
-    }
+    });
 }
 
 // =====================================================================
@@ -296,77 +281,74 @@ async function calculateOrcaRangeMetrics(currentPrice, rangePercent, whirlpoolDa
 // =====================================================================
 async function openBalancedPositionOrca(poolAddress, totalUsdcCapital, currentPrice, rangeWidthPercent) {
 
-    //position = await getPositionOrca(poolAddress);
-   /** position = await withRetry(() => getPositionOrca(poolAddress), 3, 2000);
-
-    if (position){
-        throw new Error("Existe uma posição aberta...");
-    }**/
-
     const signer = await setEnvAndLoadWallet();
+    return await executeWithRpcFallback(async (rpcUrl) => {
 
-    const whirlpool = await fetchWhirlpool(rpc, poolAddress);
-    const whirlpoolData = whirlpool.data;
-    const tokenMintA = whirlpoolData.tokenMintA;
-    const tokenMintB = whirlpoolData.tokenMintB;
+        const rpcInstance = createSolanaRpc(rpcUrl);
 
-    const tokenInfo = await getTokenInfo(tokenMintA, tokenMintB);
-    const decimalsTokenA = tokenInfo.decimalsTokenA;
-    const decimalsTokenB = tokenInfo.decimalsTokenB;
+        const whirlpool = await fetchWhirlpool(rpcInstance, poolAddress);
+        const whirlpoolData = whirlpool.data;
+        const tokenMintA = whirlpoolData.tokenMintA;
+        const tokenMintB = whirlpoolData.tokenMintB;
 
-    // Cálculo de métricas baseado na mesma estrutura validada
-    const metrics = await calculateOrcaRangeMetrics(currentPrice, rangeWidthPercent, whirlpoolData);
-    console.log(metrics)
-    console.log(`🚀 [Orca] A calcular e abrir posição concentrada para $${totalUsdcCapital} USDC...`);
+        const tokenInfo = await getTokenInfo(tokenMintA, tokenMintB);
+        const decimalsTokenA = tokenInfo.decimalsTokenA;
+        const decimalsTokenB = tokenInfo.decimalsTokenB;
 
-    // Definir montantes (Ex: 50% Token A / 50% Token B)
-    const tokenBVal = totalUsdcCapital * 0.5;
-    const tokenAVal = totalUsdcCapital * 0.5;
-    const tokenAmountA = tokenAVal / currentPrice;
+        // Cálculo de métricas baseado na mesma estrutura validada
+        const metrics = await calculateOrcaRangeMetrics(currentPrice, rangeWidthPercent, whirlpoolData);
+        console.log(metrics)
+        console.log(`🚀 [Orca] A calcular e abrir posição concentrada para $${totalUsdcCapital} USDC...`);
 
-    // Conversão rigorosa para BigInt com os decimais corretos
-    const tokenMaxA = BigInt(Math.floor(tokenAmountA * Math.pow(10, decimalsTokenA)));
-    const tokenMaxB = BigInt(Math.floor(tokenBVal * Math.pow(10, decimalsTokenB)));
+        // Definir montantes (Ex: 50% Token A / 50% Token B)
+        const tokenBVal = totalUsdcCapital * 0.5;
+        const tokenAVal = totalUsdcCapital * 0.5;
+        const tokenAmountA = tokenAVal / currentPrice;
 
-    // Garantir Gás/Rent usando o ensureGasTracker (caso o Token A seja SOL/WSOL, usamos o valor em lamports dele; caso contrário, estimamos uma base segura para taxas e alugueres)
-    const estimatedLamportsNeeded = whirlpoolData.tokenMintA === WSOL_MINT || whirlpoolData.tokenMintA === "So11111111111111111111111111111111111111112"
-        ? Number(tokenMaxA)
-        : 10_000_000; // Buffer base para contas e metadados se o Token A não for SOL
+        // Conversão rigorosa para BigInt com os decimais corretos
+        const tokenMaxA = BigInt(Math.floor(tokenAmountA * Math.pow(10, decimalsTokenA)));
+        const tokenMaxB = BigInt(Math.floor(tokenBVal * Math.pow(10, decimalsTokenB)));
 
-    const gasOk = await ensureGasTracker(currentPrice, estimatedLamportsNeeded);
-    console.log("⏳ A aguardar 3 segundos para propagação do saldo de SOL...");
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    if (!gasOk) {
-        throw new Error("Falha no reabastecimento de gás/rent (ensureGasTracker falhou na Orca).");
-    }
+        // Garantir Gás/Rent usando o ensureGasTracker (caso o Token A seja SOL/WSOL, usamos o valor em lamports dele; caso contrário, estimamos uma base segura para taxas e alugueres)
+        const estimatedLamportsNeeded = whirlpoolData.tokenMintA === WSOL_MINT || whirlpoolData.tokenMintA === "So11111111111111111111111111111111111111112"
+            ? Number(tokenMaxA)
+            : 10_000_000; // Buffer base para contas e metadados se o Token A não for SOL
 
-    // Chamada oficial da API da Orca com o mesmo padrão de execução
-    const {
-        instructions,
-        initializationCost,
-        positionMint,
-        callback: sendTx,
-    } = await openConcentratedPosition(
-        address(poolAddress),
-        {
-            tokenMaxA: tokenMaxA,
-            tokenMaxB: tokenMaxB,
-        },
-        metrics.priceMin,
-        metrics.priceMax,
-        {
-            slippageToleranceBps: 100, // 1% de slippage
-            withTokenMetadataExtension: true,
-            whirlpoolDeployment: WhirlpoolDeployment.mainnet,
-            funder: signer
-
+        const gasOk = await ensureGasTracker(currentPrice, estimatedLamportsNeeded);
+        console.log("⏳ A aguardar 3 segundos para propagação do saldo de SOL...");
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        if (!gasOk) {
+            throw new Error("Falha no reabastecimento de gás/rent (ensureGasTracker falhou na Orca).");
         }
-    );
 
-    const txId = await sendTx();
+        // Chamada oficial da API da Orca com o mesmo padrão de execução
+        const {
+            instructions,
+            initializationCost,
+            positionMint,
+            callback: sendTx,
+        } = await openConcentratedPosition(
+            address(poolAddress),
+            {
+                tokenMaxA: tokenMaxA,
+                tokenMaxB: tokenMaxB,
+            },
+            metrics.priceMin,
+            metrics.priceMax,
+            {
+                slippageToleranceBps: 100, // 1% de slippage
+                withTokenMetadataExtension: true,
+                whirlpoolDeployment: WhirlpoolDeployment.mainnet,
+                funder: signer
 
-    console.log(`✅ [Orca] Posição aberta com sucesso! Address: ${positionMint} | TX: ${txId}`);
-    return true;
+            }
+        );
+
+        const txId = await sendTx();
+
+        console.log(`✅ [Orca] Posição aberta com sucesso! Address: ${positionMint} | TX: ${txId}`);
+        return true;
+    });
 }
 
 async function closeAllPoolPositionsAndSettleOrca(poolAddress) {
@@ -374,44 +356,48 @@ async function closeAllPoolPositionsAndSettleOrca(poolAddress) {
 
     const signer = await setEnvAndLoadWallet();
 
-    const positions = await fetchPositionsForOwner(
-        rpc,
-        signer.address,
-        WhirlpoolDeployment.mainnet,
-    );
+    return await executeWithRpcFallback(async (rpcUrl) => {
+        const rpcInstance = createSolanaRpc(rpcUrl);
 
-    const poolPositions = positions.filter(p => p.data && p.data.whirlpool === poolAddress);
-
-    if (poolPositions.length === 0) {
-        console.log("Nenhuma posição da Orca para fechar.");
-        return true;
-    }
-
-    for (const position of poolPositions) {
-        const positionMint = position.data.positionMint;
-        const positionPubkeyStr = position.address;
-        console.log(`🧹 A fechar posição Orca: ${positionPubkeyStr}`);
-
-        const liquidity = position.data.liquidity;
-        if (liquidity <= 0) continue;
-
-        // Utilização da função moderna de fecho/recolha integrada no ecossistema
-        const { callback: closeTx } = await closePosition(
-            address(positionMint),
-            {
-                whirlpoolDeployment: WhirlpoolDeployment.mainnet,
-                slippageToleranceBps: 100,
-                funder: signer,
-                authority: signer
-            }
+        const positions = await fetchPositionsForOwner(
+            rpcInstance,
+            signer.address,
+            WhirlpoolDeployment.mainnet,
         );
 
-        const txid = await closeTx();
-        console.log(`✅ Posição ${positionPubkeyStr} fechada com sucesso! TX: ${txid}`);
-    }
+        const poolPositions = positions.filter(p => p.data && p.data.whirlpool === poolAddress);
 
-    console.log(`✅ Todas as posições da Orca foram fechadas e liquidadas.`);
-    return true;
+        if (poolPositions.length === 0) {
+            console.log("Nenhuma posição da Orca para fechar.");
+            return true;
+        }
+
+        for (const position of poolPositions) {
+            const positionMint = position.data.positionMint;
+            const positionPubkeyStr = position.address;
+            console.log(`🧹 A fechar posição Orca: ${positionPubkeyStr}`);
+
+            const liquidity = position.data.liquidity;
+            if (liquidity <= 0) continue;
+
+            // Utilização da função moderna de fecho/recolha integrada no ecossistema
+            const { callback: closeTx } = await closePosition(
+                address(positionMint),
+                {
+                    whirlpoolDeployment: WhirlpoolDeployment.mainnet,
+                    slippageToleranceBps: 100,
+                    funder: signer,
+                    authority: signer
+                }
+            );
+
+            const txid = await closeTx();
+            console.log(`✅ Posição ${positionPubkeyStr} fechada com sucesso! TX: ${txid}`);
+        }
+
+        console.log(`✅ Todas as posições da Orca foram fechadas e liquidadas.`);
+        return true;
+    });
 }
 
 async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, currentPrice, rangeWidthDollars) {
@@ -447,62 +433,57 @@ async function rebalancePositionByStrategy(poolAddress, totalUsdcCapital, curren
 }
 
 async function getMarketStatusOrca(poolAddress) {
-    try {
-        const solBalanceLamports = await connection.getBalance(wallet.publicKey);
-        const solBalance = solBalanceLamports / 1_000_000_000;
-
-        let usdcBalance = 0;
+    return await executeWithRpcFallback(async (rpcUrl) => {
         try {
-            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                mint: new PublicKey(USDC_MINT)
-            });
-            if (tokenAccounts.value.length > 0) {
-                usdcBalance = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount;
-            }
-        } catch (e) {}
+            const connection = new Connection(rpcUrl, 'confirmed');
+            const solBalanceLamports = await connection.getBalance(wallet.publicKey);
+            const solBalance = solBalanceLamports / 1_000_000_000;
 
-        const whirlpool = await fetchWhirlpool(rpc, poolAddress);
-        const whirlpoolData = whirlpool.data;
-        const tokenMintA = whirlpoolData.tokenMintA
-        const tokenMintB = whirlpoolData.tokenMintB
+            let usdcBalance = 0;
+            try {
+                const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+                    mint: new PublicKey(USDC_MINT)
+                });
+                if (tokenAccounts.value.length > 0) {
+                    usdcBalance = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount;
+                }
+            } catch (e) {}
 
-        const tokenInfo = await getTokenInfo(tokenMintA, tokenMintB)
-        const decimalsTokenA = tokenInfo.decimalsTokenA
-        const decimalsTokenB = tokenInfo.decimalsTokenB
-        const tokenPriceA = tokenInfo.priceUsdcTokenA
-        const tokenPriceB = tokenInfo.priceUsdcTokenB
+            const rpcInstance = createSolanaRpc(rpcUrl);
+            const whirlpool = await fetchWhirlpool(rpcInstance, poolAddress);
+            const whirlpoolData = whirlpool.data;
+            const tokenMintA = whirlpoolData.tokenMintA
+            const tokenMintB = whirlpoolData.tokenMintB
 
-        const activeTickIndex = whirlpoolData.tickCurrentIndex;
+            const tokenInfo = await getTokenInfo(tokenMintA, tokenMintB)
+            const decimalsTokenA = tokenInfo.decimalsTokenA
+            const decimalsTokenB = tokenInfo.decimalsTokenB
+            const tokenPriceA = tokenInfo.priceUsdcTokenA
+            const tokenPriceB = tokenInfo.priceUsdcTokenB
 
-        //const currentPrice = Math.pow(1.0001, activeTickIndex);
-        const currentPrice = Math.pow(1.0001, activeTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
+            const activeTickIndex = whirlpoolData.tickCurrentIndex;
 
-        const statusReport = {
-            status: "SUCCESS",
-            wallet: wallet.publicKey.toBase58(),
-            balances: {
-                SOL: solBalance,
-                USDC: usdcBalance
-            },
-            pool: {
-                address: poolAddress,
-                activeTickIndex: activeTickIndex,
-                rawPrice: currentPrice
-            }
-        };
+            const currentPrice = Math.pow(1.0001, activeTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
 
-        //console.log(JSON.stringify(statusReport));
-        //process.exit(0);
-        return statusReport;
-    } catch (error) {
-        const errorReport = {
-            status: "ERROR",
-            message: error.message
-        };
-        //console.log(JSON.stringify(errorReport));
-        throw error;
-        //process.exit(1);
-    }
+            const statusReport = {
+                status: "SUCCESS",
+                wallet: wallet.publicKey.toBase58(),
+                balances: {
+                    SOL: solBalance,
+                    USDC: usdcBalance
+                },
+                pool: {
+                    address: poolAddress,
+                    activeTickIndex: activeTickIndex,
+                    rawPrice: currentPrice
+                }
+            };
+
+            return statusReport;
+        } catch (error) {
+            throw error;
+        }
+    });
 }
 
 async function getTokenInfo(tokenMintA, tokenMintB){
@@ -530,37 +511,33 @@ async function getTokenInfo(tokenMintA, tokenMintB){
         };
 
     } catch (error) {
-        //console.error("Erro ao ir buscar dados da API de informação de token:", error.message);
         throw new Error("Erro ao ir buscar dados da API de informação de token:", error.message);
-        //return null;
     }
 }
 
 async function getPositionOrca(poolAddress) {
-    try {
-        const signer = await setEnvAndLoadWallet();
+    const signer = await setEnvAndLoadWallet();
 
+    return await executeWithRpcFallback(async (rpcUrl) => {
+
+        const rpcInstance = createSolanaRpc(rpcUrl);
         const positions = await fetchPositionsForOwner(
-            rpc,
+            rpcInstance,
             signer.address,
             WhirlpoolDeployment.mainnet,
         );
 
         if (!positions || positions.length === 0) {
-            //console.log(JSON.stringify({ exists: false }));
-            //return;
             throw new Error("RPC ainda não indexou a posição (lista vazia). A tentar novamente...");
         }
 
         const targetPosition = positions.find(p => p.data && p.data.whirlpool === poolAddress);
 
         if (!targetPosition) {
-            //console.log(JSON.stringify({ exists: false }));
-            //return;
             throw new Error(`Posição para a pool ${poolAddress} ainda não encontrada no RPC. A tentar novamente...`);
         }
 
-        const whirlpool = await fetchWhirlpool(rpc, poolAddress);
+        const whirlpool = await fetchWhirlpool(rpcInstance, poolAddress);
         const whirlpoolData = whirlpool.data;
         const tokenMintA = whirlpoolData.tokenMintA
         const tokenMintB = whirlpoolData.tokenMintB
@@ -597,9 +574,7 @@ async function getPositionOrca(poolAddress) {
                 if (apiData.current_value_usd) apiCurrentValueUsd = apiData.current_value_usd;
                 if (apiData.unclaimed_fees_usd) apiFeesUsd = apiData.unclaimed_fees_usd;
             }
-        } catch (apiErr) {
-            // Ignora falhas da API
-        }
+        } catch (apiErr) {}
 
         // Montantes base da pool calculados via liquidez
         const lowerPrice = Math.pow(1.0001, lowerTickIndex);
@@ -644,10 +619,7 @@ async function getPositionOrca(poolAddress) {
                 feeA = Number(feesQuote.feeOwedA) / Math.pow(10, decimalsTokenA);
                 feeB = Number(feesQuote.feeOwedB) / Math.pow(10, decimalsTokenB);
             }
-        } catch (e) {
-            // Mantém os valores estáticos
-             //console.log(JSON.stringify({ status: "ERROR", message: e.message }));
-        }
+        } catch (e) {}
 
         // 1. Totais reais (Tokens principais + Taxas pendentes)
         const totalTokenA = finalAmountA + feeA;
@@ -667,7 +639,7 @@ async function getPositionOrca(poolAddress) {
         const upperPriceFinal = Math.pow(1.0001, upperTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
 
 
-        result = {
+        return {
             exists: true,
             address: positionAddress,
             positionMint: positionMint,
@@ -688,14 +660,7 @@ async function getPositionOrca(poolAddress) {
             pnlUsd: Number(pnlUsd.toFixed(2)),
             pnlPercentage: Number(pnlPercentage.toFixed(2))
         }
-        //console.log(JSON.stringify(result));
-        return result;
-
-    } catch (error) {
-        //console.log(JSON.stringify({ status: "ERROR", message: error.message }));
-        throw error;
-        //return null;
-    }
+    });
 }
 
 async function withRetry(asyncFn, maxRetries = 3, delayMs = 2000) {
@@ -740,42 +705,6 @@ async function handleAction(actionFn, poolAddress, successStatus) {
         console.log(JSON.stringify({ status: "ERROR", message: err.message }));
         process.exit(1);
     }
-}
-
-async function waitForState__(actionFn, checkStateFn, targetExists, maxAttempts = 5, delayMs = 6000) {
-    let attempts = 0;
-
-    while (attempts < maxAttempts) {
-        attempts++;
-        try {
-            // 1. Executa a ação (caso ainda não tenha sido executada com sucesso)
-            if (attempts === 1) {
-                console.log(`🚀 [Ação] A executar transação (Tentativa ${attempts})...`);
-                await actionFn();
-            } else {
-                console.log(`🔄 [Ação] Re-tentando transação (Tentativa ${attempts})...`);
-                await actionFn();
-            }
-        } catch (error) {
-            console.warn(`⚠️ [Aviso] A transação falhou na tentativa ${attempts}: ${error.message}`);
-        }
-
-        // 2. Valida o estado real na blockchain
-        console.log(`🔍 [Estado] A verificar on-chain se a posição ${targetExists ? 'existe' : 'foi fechada'}...`);
-        const position = await checkStateFn();
-        const exists = position !== null && position !== undefined;
-
-        // 3. Compara com o objetivo desejado
-        if (exists === targetExists) {
-            console.log(`✅ [Sucesso] Estado desejado atingido com sucesso na blockchain!`);
-            return true;
-        }
-
-        console.log(`⏳ [Espera] O estado ainda não reflete o desejado. A aguardar ${delayMs / 1000}s...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-    }
-
-    throw new Error(`❌ [Erro Crítico] O estado desejado (posição existir: ${targetExists}) não foi confirmado após ${maxAttempts} tentativas.`);
 }
 
 async function waitForState(actionFn, checkStateFn, targetExists, maxAttempts = 5, delayMs = 6000) {
