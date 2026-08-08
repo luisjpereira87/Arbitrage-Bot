@@ -528,13 +528,15 @@ async function getPositionOrca(poolAddress) {
         );
 
         if (!positions || positions.length === 0) {
-            throw new Error("RPC ainda não indexou a posição (lista vazia). A tentar novamente...");
+            //throw new Error("RPC ainda não indexou a posição (lista vazia). A tentar novamente...");
+            return null
         }
 
         const targetPosition = positions.find(p => p.data && p.data.whirlpool === poolAddress);
 
         if (!targetPosition) {
-            throw new Error(`Posição para a pool ${poolAddress} ainda não encontrada no RPC. A tentar novamente...`);
+            //throw new Error(`Posição para a pool ${poolAddress} ainda não encontrada no RPC. A tentar novamente...`);
+            return null;
         }
 
         const whirlpool = await fetchWhirlpool(rpcInstance, poolAddress);
