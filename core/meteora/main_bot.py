@@ -302,20 +302,19 @@ class DeltaNeutralSniperBot:
         logging.warning("🚨 PREÇO FORA DO RANGE! A iniciar processo de fecho...")
 
         # 2. Opcional: validações de mercado antes de fechar
-        if await self.should_wait_for_market():
-            # 3. Executa APENAS o fecho da posição e do hedge
-            is_closed = await self.close_position(position)
+        # if await self.should_wait_for_market():
+        # 3. Executa APENAS o fecho da posição e do hedge
+        is_closed = await self.close_position(position)
 
-            if is_closed:
-                logging.info("✅ Posição e hedge fechados com sucesso. Abertura agendada para o próximo loop.")
-                self.out_of_range_since = None
-                # Retorna None para indicar que a posição atual deixou de existir,
-                # permitindo que o próximo ciclo trate da nova abertura de forma isolada.
-                return None
-            else:
-                logging.error("❌ Falha ao fechar a posição neste ciclo.")
-
-        return position
+        if is_closed:
+            logging.info("✅ Posição e hedge fechados com sucesso. Abertura agendada para o próximo loop.")
+            self.out_of_range_since = None
+            # Retorna None para indicar que a posição atual deixou de existir,
+            # permitindo que o próximo ciclo trate da nova abertura de forma isolada.
+            return None
+        else:
+            logging.error("❌ Falha ao fechar a posição neste ciclo.")
+            return position
 
     async def loop_management(self) -> PositionStatus | None:
         position = await self.meteora_client.get_position()
@@ -430,7 +429,7 @@ logging.basicConfig(
 # =====================================================================
 if __name__ == "__main__":
     # Configuração de Arranque Inicial: Aloca $1000 USDC totais, com um range de 2 dólares de largura
-    bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24, profit_target_pct=0.002,
+    bot = DeltaNeutralSniperBot(usdc_min_hl=15, total_usdc_capital=30, profit_target_pct=0.002,
                                 sdk_file_path="orca_bot.js")
     # bot.meteora_client.get_last_position()
 

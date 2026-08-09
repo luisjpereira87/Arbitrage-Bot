@@ -33,7 +33,7 @@ logging.getLogger("solana").setLevel(logging.WARNING)
 
 async def run():
     cex_bot = CexBot()
-    delta_bot = DeltaNeutralSniperBot(usdc_min_hl=12, total_usdc_capital=24, profit_target_pct=0.002,
+    delta_bot = DeltaNeutralSniperBot(usdc_min_hl=15, total_usdc_capital=30, profit_target_pct=0.002,
                                       sdk_file_path="orca_bot.js")
     await asyncio.gather(
         cex_bot.test_spread_loop(),
