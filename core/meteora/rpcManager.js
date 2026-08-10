@@ -11,7 +11,7 @@ if (fs.existsSync(envPath)) {
 
 const RPC_ENDPOINTS = [
     process.env.RPC_HELIUS_SOLANA_URL,
-    process.env.RPC_ALCHEMY_SOLANA_URL,
+    process.env.RPC_INFURA_SOLANA_URL,
     "https://api.mainnet-beta.solana.com"
 ].filter(Boolean);
 
