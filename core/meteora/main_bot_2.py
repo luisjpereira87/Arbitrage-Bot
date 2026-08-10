@@ -320,6 +320,7 @@ class DeltaNeutralSniperAggressiveBot:
                 self.peak_pnl_hl = 0.0
             return None
 
+        """
         # CONDIÇÃO 2 (Opcional): O mercado acalmou e deixou de estar turbulento, permitindo voltar à Orca
         if not await self.hl_client.is_market_turbulent(threshold=0.003):
             logging.info("🌊 O mercado estabilizou após a queda. A fechar short para voltar a farmar na Orca...")
@@ -327,7 +328,7 @@ class DeltaNeutralSniperAggressiveBot:
             if is_closed:
                 logging.info("✅ Short fechado por estabilização de mercado.")
             return None
-
+        """
         return None
 
     async def loop_management(self) -> None | PositionStatus:
@@ -458,7 +459,7 @@ logging.basicConfig(
 # =====================================================================
 if __name__ == "__main__":
     # Configuração de Arranque Inicial: Aloca $1000 USDC totais, com um range de 2 dólares de largura
-    bot = DeltaNeutralSniperAggressiveBot(usdc_min_hl=15, total_usdc_capital=30, profit_target_pct=0.002,
+    bot = DeltaNeutralSniperAggressiveBot(usdc_min_hl=15, total_usdc_capital=30, profit_target_pct=0.004,
                                           sdk_file_path="orca_bot.js")
     # bot.meteora_client.get_last_position()
 
