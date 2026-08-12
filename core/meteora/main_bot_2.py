@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from core.meteora.dclass import PositionStatus, RangeStatus
-from core.meteora.hl_client import HlClient
+from core.meteora.hl_client import HlClient, DirectionMarket
 from core.meteora.meteora_client import MeteoraClient
 from core.meteora.pool_manager_dclass import PoolManager
 
@@ -66,6 +66,15 @@ class DeltaNeutralSniperAggressiveBot:
 
         self.peak_pnl_orca = 0.0
         self.peak_pnl_hl = 0.0
+
+        self.cooldown_duration_15m = 900
+        self.cooldown_duration_5m = 300
+
+        # 🧠 NOVAS VARIÁVEIS PARA O COOLDOWN INTELIGENTE BASEADO EM RETRACE
+        self.waiting_for_retrace = False
+        self.target_short_price = 0.0
+        self.orca_loss_to_compensate = 0.0
+        self.retrace_start_time = 0.0
 
     def _evaluate_trailing_profit(self, current_pnl: float, current_peak: float, target_profit: float, label: str,
                                   is_stop_loss=False) -> \
@@ -208,8 +217,8 @@ class DeltaNeutralSniperAggressiveBot:
             return True, ActionType.TAKE_PROFIT_ORCA
 
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
-        is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
-        if orca_pnl <= loss_trigger_limit and is_turbulent:
+        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.005)
+        if orca_pnl <= loss_trigger_limit and is_turbulent and direction == DirectionMarket.DOWN:
             logging.warning(
                 f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}) e mercado turbulento. A inverter para Short na Hyperliquid!")
             self.out_of_range_since = None
@@ -261,7 +270,7 @@ class DeltaNeutralSniperAggressiveBot:
 
         return False, ActionType.NONE
 
-    async def check_and_close_management(self, position: PositionStatus) -> PositionStatus | None:
+    async def check_and_close_management_old(self, position: PositionStatus) -> PositionStatus | None:
         if position is None or position.size != 1:
             return position
 
@@ -296,6 +305,56 @@ class DeltaNeutralSniperAggressiveBot:
             logging.error("❌ Falha ao fechar a posição na Orca neste ciclo.")
             return position
 
+    async def check_and_close_management(self, position: PositionStatus) -> PositionStatus | None:
+        if position is None or position.size != 1:
+            return position
+
+        lower_price = position.lowerPrice
+        upper_price = position.upperPrice
+
+        # Valida as condições de saída
+        is_outside, action_type = await self.is_price_outside_range_sustained(lower_price, upper_price)
+
+        if not is_outside:
+            return position
+
+        logging.warning(f"🚨 AÇÃO ACIONADA [{action_type}]! A processar fecho...")
+
+        # Guarda o PnL atual da Orca antes de fechar (para sabermos quanto perdemos)
+        orca_pnl_at_close = position.pnlUsd
+
+        # Fecha a posição na Orca em qualquer um dos cenários de saída
+        is_closed_orca = await self.close_position_dex()
+
+        if is_closed_orca:
+            logging.info("✅ Posição da Orca fechada com sucesso.")
+            self.peak_pnl_orca = 0.0
+
+            # SE O MOTIVO FOI O PREJUÍZO LIMITE, PREPARAMOS O SHORT INTELIGENTE COM RETRACE
+            if action_type == ActionType.STOP_LOSS_REVERSE_TO_HL:
+                market_status = await self.meteora_client.get_status()
+                current_market_price = market_status.raw_price
+
+                # 🎯 LÓGICA DO RETRACE INTELIGENTE:
+                # Como vais abrir um Short, queres que o preço suba ligeiramente (faça um retrace)
+                # para entrares num ponto mais alto, compensando o prejuízo de ${abs(orca_pnl_at_close):.2f} da Orca.
+                # Criamos um offset proporcional ao prejuízo sofrido.
+                price_offset = current_market_price * 0.002  # Exemplo: 0.2% de ressalto técnico
+
+                self.target_short_price = current_market_price + price_offset
+                self.orca_loss_to_compensate = abs(orca_pnl_at_close)
+                self.waiting_for_retrace = True
+                self.retrace_start_time = time.time()
+
+                logging.info(f"🎯 [Retrace Ativo] Orca fechada com prejuízo de ${self.orca_loss_to_compensate:.2f}. "
+                             f"A aguardar que o preço suba até ${self.target_short_price:.4f} para abrir o Short cirurgicamente!")
+
+            self.out_of_range_since = None
+            return None
+        else:
+            logging.error("❌ Falha ao fechar a posição na Orca neste ciclo.")
+            return position
+
     async def check_and_close_hl_management(self, position_hl) -> None:
         """
         Monitoriza a posição de Short na Hyperliquid.
@@ -319,6 +378,7 @@ class DeltaNeutralSniperAggressiveBot:
             if is_closed:
                 logging.info("✅ Short fechado no topo com sucesso. A voltar para a Orca.")
                 self.peak_pnl_hl = 0.0
+                self.cooldown_until = time.time() + self.cooldown_duration_15m
             return None
         return None
 
@@ -391,8 +451,99 @@ class DeltaNeutralSniperAggressiveBot:
         current_time = time.time()
         MAX_RANGE_PCT = 0.05
         CALC_INTERVAL = 100
-        COOLDOWN_DURATION = 300
         TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
+
+        # 1. 🎯 COOLDOWN INTELIGENTE POR RETRACE DE PREÇO (COM SALVAGUARDAS)
+        if getattr(self, 'waiting_for_retrace', False):
+
+            # A. TIMEOUT DE SEGURANÇA: Se passarem 15 minutos (900s) e o preço nunca lá foi, desiste do retrace para não ficar preso!
+            if current_time - getattr(self, 'retrace_start_time', current_time) > 180:
+                logging.warning(
+                    "⚠️ [Retrace Timeout] O mercado não fez o ressalto esperado em 15 minutos. A cancelar espera inteligente.")
+                self.waiting_for_retrace = False
+                return False  # Liberta o bot para reavaliar o mercado normalmente
+
+            market_status = await self.meteora_client.get_status()
+            current_price = market_status.raw_price
+
+            # B. Verifica se o preço atingiu o alvo do ressalto
+            if current_price >= self.target_short_price:
+
+                # C. FILTRO DE SEGURANÇA CRUCIAL: O preço subiu, mas qual é a direção da turbulência?
+                # Se o mercado estiver em turbulência mas a subir violentamente contra ti, NÃO ENTRES!
+                is_turbulent, direction = await self.hl_client.is_market_turbulent(
+                    threshold=TURBULENCE_THRESHOLD)
+
+                if is_turbulent and direction == DirectionMarket.UP:
+                    logging.warning(
+                        f"🚨 [Abortar Short] O preço atingiu o target de retrace (${current_price:.4f}), MAS o mercado está em turbulência EM ALTA ({direction}). Falso ressalto! A cancelar Short para evitar desastre.")
+                    self.waiting_for_retrace = False
+                    self.cooldown_until = current_time + 300  # Castigo de 5 min por falso alarme
+                    return False
+
+                logging.info(
+                    f"🎯 [Retrace Atingido com Sucesso!] Preço atual ({current_price:.4f}) alcançou o alvo (${self.target_short_price:.4f}). "
+                    f"A disparar Short para compensar a Orca!")
+
+                self.waiting_for_retrace = False  # Desativa a espera
+
+                # Dispara o Short de forma segura
+                await self.open_position_hl(current_price)
+                return True
+            else:
+                # O preço ainda não chegou lá acima. Continua em espera inteligente.
+                return True
+
+        # 2. 🛡️ Cooldown Geral de Transição Temporal
+        if hasattr(self, 'cooldown_until') and current_time < self.cooldown_until:
+            time_left = int(self.cooldown_until - current_time)
+            logging.info(
+                f"⏳ [Cooldown Geral Ativo] O bot está em quarentena. Faltam {time_left}s para poder operar/inverter.")
+            return True
+
+        if await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD):
+            self.cooldown_until = current_time + 60
+            logging.warning("⚠️ Mercado turbulento detetado (Amplitude elevada). Pausando.")
+            return True
+
+        # 3. Verifica se precisamos de atualizar o range da Hyperliquid
+        if current_time - self.last_calculation_time >= CALC_INTERVAL:
+            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
+                                                                                       lookback=self.lookback_range,
+                                                                                       buffer=self.range_margin_pct)
+            self.last_calculation_time = current_time
+
+        # 4. Verifica se o range é abusivo
+        if self.last_known_range > MAX_RANGE_PCT:
+            if current_time < self.cooldown_until:
+                return True
+            else:
+                self.cooldown_until = current_time + self.cooldown_duration_5m
+                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {MAX_RANGE_PCT:.2%}. Cooldown ativo.")
+                return True
+
+        # Mercado está estável
+        return False
+
+    async def should_wait_for_market__(self):
+        """
+        Retorna True se o bot deve pausar a operação (modo de espera),
+        e False se estiver apto para operar.
+        """
+        current_time = time.time()
+        MAX_RANGE_PCT = 0.05
+        CALC_INTERVAL = 100
+        # COOLDOWN_DURATION = 300
+        TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
+
+        # 1. 🛡️ NOVO: Cooldown Geral de Transição (Pós-Inversão ou Pós-Stop Loss)
+        # Se a variável 'self.cooldown_until' tiver sido definida numa transição recente, o bot fica em pausa obrigatória.
+        if hasattr(self, 'cooldown_until') and current_time < self.cooldown_until:
+            time_left = int(self.cooldown_until - current_time)
+            # Só faz log a cada X tempo ou mantém simples para não inundar a consola (podes ajustar)
+            logging.info(
+                f"⏳ [Cooldown Geral Ativo] O bot está em quarentena. Faltam {time_left}s para poder operar/inverter.")
+            return True
 
         if await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD):
             self.cooldown_until = current_time + 60  # Cooldown curto de 1min para turbulência
@@ -413,7 +564,7 @@ class DeltaNeutralSniperAggressiveBot:
                 return True
             else:
                 # Acabou de entrar em volatilidade
-                self.cooldown_until = current_time + COOLDOWN_DURATION
+                self.cooldown_until = current_time + self.cooldown_duration_5m
                 logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {MAX_RANGE_PCT:.2%}. Cooldown ativo.")
                 return True
 

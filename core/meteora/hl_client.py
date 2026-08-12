@@ -1,4 +1,5 @@
 import asyncio
+import enum
 import logging
 
 import ccxt.pro as ccxtpro
@@ -9,6 +10,12 @@ from core.config.properties_multi import PropertiesMulti
 from core.dclass.open_position_dclass import OpenPosition
 from core.dclass.signal_enum import Signal
 from core.meteora.dclass import RangeStatus
+
+
+class DirectionMarket(enum.Enum):
+    UP = "UP"
+    DOWN = "DOWN"
+    NEUTRAL = "NEUTRAL"
 
 
 class HlClient:
@@ -172,7 +179,7 @@ class HlClient:
         float, float]:
         return await self.hl_exchange.get_perfect_quantities(capital_amount, dex_price, self.symbol)
 
-    async def is_market_turbulent(self, threshold=0.005) -> bool:
+    async def is_market_turbulent_(self, threshold=0.005) -> bool:
         # Obtém o dataframe
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=1)
 
@@ -185,6 +192,33 @@ class HlClient:
 
         is_turbulent = amplitude > threshold
         return is_turbulent
+
+    async def is_market_turbulent(self, threshold=0.005) -> tuple[bool, DirectionMarket]:
+        """
+        Verifica se o mercado está turbulento e determina a direção dominante do candle.
+        Retorna: (is_turbulent: bool, direction: str) onde direction pode ser 'UP', 'DOWN' ou 'NEUTRAL'.
+        """
+        # Obtém o dataframe
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=1)
+
+        # Extraímos os valores usando .iloc[-1] (a última linha)
+        high = float(ohlcv['high'].iloc[-1])
+        low = float(ohlcv['low'].iloc[-1])
+        open_price = float(ohlcv['open'].iloc[-1])
+        close_price = float(ohlcv['close'].iloc[-1])
+
+        amplitude = (high - low) / low
+        is_turbulent = amplitude > threshold
+
+        # Determina a direção com base no sentido do candle (Close vs Open)
+        if close_price > open_price:
+            direction = DirectionMarket.UP
+        elif close_price < open_price:
+            direction = DirectionMarket.DOWN
+        else:
+            direction = DirectionMarket.NEUTRAL
+
+        return is_turbulent, direction
 
     async def calculate_hedge_size_based_on_alpha(self, current_price: float, capital_amount: float, ) -> float:
         # Buscar os últimos 14 candles de forma assíncrona
