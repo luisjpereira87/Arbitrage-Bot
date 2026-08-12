@@ -304,7 +304,7 @@ class DeltaNeutralSniperAggressiveBot:
         hl_pnl, hl_balance, _ = await self.hl_client.get_balance()
 
         # Define a tua meta de lucro para o short (ex: o mesmo target ou adaptado à queda)
-        short_profit_target = self.total_usdc_capital * self.profit_target_pct * 2  # Exemplo: alvo ligeiramente maior na queda
+        short_profit_target = self.total_usdc_capital * self.profit_target_pct * 1.2  # Exemplo: alvo ligeiramente maior na queda
 
         logging.info(
             f"🐻 [Modo Short Ativo] PnL atual da Hyperliquid: ${hl_pnl:.2f} (Alvo: +${short_profit_target:.2f})")
@@ -320,16 +320,6 @@ class DeltaNeutralSniperAggressiveBot:
                 logging.info("✅ Short fechado no topo com sucesso. A voltar para a Orca.")
                 self.peak_pnl_hl = 0.0
             return None
-
-        """
-        # CONDIÇÃO 2 (Opcional): O mercado acalmou e deixou de estar turbulento, permitindo voltar à Orca
-        if not await self.hl_client.is_market_turbulent(threshold=0.003):
-            logging.info("🌊 O mercado estabilizou após a queda. A fechar short para voltar a farmar na Orca...")
-            is_closed = await self.close_position_hl()
-            if is_closed:
-                logging.info("✅ Short fechado por estabilização de mercado.")
-            return None
-        """
         return None
 
     async def loop_management(self) -> None | PositionStatus:
