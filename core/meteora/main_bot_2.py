@@ -208,9 +208,10 @@ class DeltaNeutralSniperAggressiveBot:
             return True, ActionType.TAKE_PROFIT_ORCA
 
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
-        if orca_pnl <= loss_trigger_limit:
+        is_turbulent = await self.hl_client.is_market_turbulent(threshold=0.005)
+        if orca_pnl <= loss_trigger_limit and is_turbulent:
             logging.warning(
-                f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}). A inverter para Short na Hyperliquid!")
+                f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}) e mercado turbulento. A inverter para Short na Hyperliquid!")
             self.out_of_range_since = None
             return True, ActionType.STOP_LOSS_REVERSE_TO_HL
 
