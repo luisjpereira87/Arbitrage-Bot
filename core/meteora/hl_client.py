@@ -5,7 +5,7 @@ import logging
 import ccxt.pro as ccxtpro
 
 from core.bots.exchanges.exchange_client import ExchangeClient
-from core.bots.exchanges.indicators_utils import IndicatorsUtils
+from core.bots.exchanges.indicators_utils import IndicatorsUtils, RsiResponse
 from core.config.properties_multi import PropertiesMulti
 from core.dclass.open_position_dclass import OpenPosition
 from core.dclass.signal_enum import Signal
@@ -234,3 +234,7 @@ class HlClient:
         else:
             # Mercado abaixo da média recente -> tendência de baixa
             return capital_amount * 0.90
+
+    async def check_rsi_condition(self, period=14) -> RsiResponse:
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=period + 100)
+        return IndicatorsUtils.check_rsi_condition(ohlcv, period)

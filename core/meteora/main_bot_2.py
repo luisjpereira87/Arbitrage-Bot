@@ -6,6 +6,7 @@ import sys
 import time
 from datetime import datetime
 
+from core.bots.exchanges.indicators_utils import RsiCondition, RsiMomentum
 from core.meteora.dclass import PositionStatus, RangeStatus
 from core.meteora.hl_client import HlClient, DirectionMarket
 from core.meteora.meteora_client import MeteoraClient
@@ -17,6 +18,13 @@ class ActionType(enum.Enum):
     STOP_LOSS_REVERSE_TO_HL = "STOP_LOSS_REVERSE_TO_HL"
     OUT_OF_RANGE_CLOSE = "OUT_OF_RANGE_CLOSE"
     NONE = "NONE"
+
+
+class MarketAction(enum.Enum):
+    OPEN_LONG = "open_long"
+    OPEN_SHORT = "open_short"
+    CONTINUE_LONG = "continue_long"
+    CONTINUE_SHORT = "continue_short"
 
 
 class DeltaNeutralSniperAggressiveBot:
@@ -76,13 +84,19 @@ class DeltaNeutralSniperAggressiveBot:
         self.orca_loss_to_compensate = 0.0
         self.retrace_start_time = 0.0
 
-    def _evaluate_trailing_profit(self, current_pnl: float, current_peak: float, target_profit: float, label: str,
-                                  is_stop_loss=False) -> \
-            tuple[bool, float]:
+    async def _evaluate_position_exit(self, current_pnl: float, current_peak: float, target_profit: float,
+                                      action: MarketAction, label: str, is_stop_loss=False) -> tuple[bool, float]:
         """
-        Método helper genérico para gerir o Trailing Take Profit (Orca ou Hyperliquid).
-        Retorna: (should_close: bool, updated_peak: float)
+        Avalia o fecho da posição combinando:
+        1. Lógica mecânica de Trailing Take Profit.
+        2. Validação técnica (RSI/EMA) através do motor central.
         """
+
+        # A. Validação Técnica (Decisão Antecipada)
+        # Se o motor disser que não devemos continuar, fechamos mesmo que o PnL esteja abaixo do pico
+        if not await self.evaluate_market_condition(action):
+            logging.info(f"🛑 [{label}] Fecho técnico acionado pelo RSI/EMA.")
+            return True, 0.0
 
         # 1. Validação de Stop Loss (Apenas tiver ativo)
         if is_stop_loss:
@@ -92,28 +106,80 @@ class DeltaNeutralSniperAggressiveBot:
                     f"🚨 [{label}] Stop-Loss acionado! PnL atual: ${current_pnl:.2f} (Limite: ${stop_loss_limit:.2f})")
                 return True, 0.0
 
-        # 2. Se ainda não atingiu o alvo de lucro
+        # B. Lógica de Trailing (O PnL dita a regra)
         if current_pnl < target_profit:
-            # Se por acaso estava em pico mas o PnL caiu abaixo do alvo, resetamos o pico
             return False, 0.0
 
-        # 3. Se atingiu o alvo e o pico ainda é 0 (acabou de entrar em zona de lucro)
         if current_peak == 0.0:
-            logging.info(f"🎯 [{label}] Alvo de lucro atingido (${current_pnl:.2f}). A iniciar rastreio de pico...")
             return False, current_pnl
 
-        # 4. Se o PnL atual é maior que o pico, atualizamos o pico
         if current_pnl > current_peak:
-            logging.info(f"📈 [{label}] Novo pico de lucro: ${current_pnl:.2f}")
             return False, current_pnl
 
-        # 5. Se o PnL atual é menor ou igual ao pico, significa que começou a recuar
         if current_pnl <= current_peak:
-            logging.info(
-                f"📉 [{label}] Lucro a estabilizar/cair do pico (${current_peak:.2f} -> ${current_pnl:.2f}). A fechar!")
-            return True, 0.0  # Reset do pico e autoriza o fecho
+            logging.info(f"📉 [{label}] Lucro a recuar (${current_peak:.2f} -> ${current_pnl:.2f}). A fechar!")
+            return True, 0.0
 
         return False, current_peak
+
+    async def evaluate_market_condition(self, action: MarketAction) -> bool:
+        """
+        Motor central de decisão. Avalia o RSI, a EMA do RSI, turbulência
+        e devolve True se a ação for permitida, ou False caso contrário.
+        """
+        TURBULENCE_THRESHOLD = 0.005
+
+        # 1. Verificação global de turbulência (aplica-se a qualquer ação)
+        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD)
+        if is_turbulent:
+            # Se houver turbulência violenta contra a direção pretendida, bloqueia
+            if action in [MarketAction.OPEN_LONG, MarketAction.CONTINUE_LONG] and direction == DirectionMarket.DOWN:
+                return False
+            if action in [MarketAction.OPEN_SHORT, MarketAction.CONTINUE_SHORT] and direction == DirectionMarket.UP:
+                return False
+
+        # 2. Obter o contexto técnico avançado do RSI de uma só vez
+        rsi_info = await self.hl_client.check_rsi_condition()
+
+        # 3. Avaliação específica por cada intenção de trading
+
+        # --- ABRIR LONG ---
+        if action == MarketAction.OPEN_LONG:
+            # Não abrir Long se estivermos em extremos de sobrecompra ou se a EMA estiver a apontar para baixo
+            if rsi_info.state in [RsiCondition.OVERBOUGHT, RsiCondition.EXTREME_OVERBOUGHT]:
+                return False
+            if rsi_info.position_to_ema == RsiMomentum.EMA_BELOW and rsi_info.momentum == RsiMomentum.COOLING:
+                return False
+            return True
+
+        # --- ABRIR SHORT ---
+        if action == MarketAction.OPEN_SHORT:
+            # Não abrir Short se estivermos em extremos de sobrevenda ou se o momentum estiver fortemente aquecido para cima
+            if rsi_info.state in [RsiCondition.OVERSOLD, RsiCondition.EXTREME_OVERSOLD]:
+                return False
+            if rsi_info.position_to_ema == RsiMomentum.EMA_ABOVE and rsi_info.momentum == RsiMomentum.HEATING:
+                return False
+            return True
+
+        # --- CONTINUAR COM O LONG ---
+        if action == MarketAction.CONTINUE_LONG:
+            # Queremos manter o Long enquanto o RSI não cruzar abaixo da EMA de forma agressiva
+            if rsi_info.rsi_crossed_ema_down and rsi_info.state in [RsiCondition.OVERBOUGHT,
+                                                                    RsiCondition.EXTREME_OVERBOUGHT]:
+                logging.info("🛑 [Sinal de Saída Long] RSI cruzou abaixo da EMA em zona alta. Sugere fechar Long.")
+                return False  # Indica que não deve continuar (deve fechar)
+            return True
+
+        # --- CONTINUAR COM O SHORT ---
+        if action == MarketAction.CONTINUE_SHORT:
+            # Queremos manter o Short enquanto o RSI não cruzar acima da EMA de forma agressiva
+            if rsi_info.rsi_crossed_ema_up and rsi_info.state in [RsiCondition.OVERSOLD, RsiCondition.EXTREME_OVERSOLD]:
+                logging.info(
+                    "🛑 [Sinal de Saída Short] RSI cruzou abaixo/acima da EMA em zona baixa. Sugere fechar Short.")
+                return False  # Indica que não deve continuar (deve fechar)
+            return True
+
+        return True
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
         capital_para_hedge = self.total_usdc_capital / 2
@@ -210,15 +276,15 @@ class DeltaNeutralSniperAggressiveBot:
         loss_trigger_limit = -(profit_target * 0.5)  # Ou podes fixar ex: -0.03
 
         # 1. TAKE PROFIT: Atingiu a meta de lucro na Orca
-        should_close_orca, self.peak_pnl_orca = self._evaluate_trailing_profit(
-            orca_pnl, self.peak_pnl_orca, profit_target, "Orca", False
+        should_close_orca, self.peak_pnl_orca = await self._evaluate_position_exit(
+            orca_pnl, self.peak_pnl_orca, profit_target, MarketAction.CONTINUE_LONG, "Orca", False
         )
         if should_close_orca:
             return True, ActionType.TAKE_PROFIT_ORCA
 
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
-        #is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.005)
-        if orca_pnl <= loss_trigger_limit:
+        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.003)
+        if orca_pnl <= loss_trigger_limit and is_turbulent and direction == DirectionMarket.DOWN:
             logging.warning(
                 f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}) e mercado turbulento. A inverter para Short na Hyperliquid!")
             self.out_of_range_since = None
@@ -269,41 +335,6 @@ class DeltaNeutralSniperAggressiveBot:
                 return True, ActionType.OUT_OF_RANGE_CLOSE
 
         return False, ActionType.NONE
-
-    async def check_and_close_management_old(self, position: PositionStatus) -> PositionStatus | None:
-        if position is None or position.size != 1:
-            return position
-
-        lower_price = position.lowerPrice
-        upper_price = position.upperPrice
-
-        # Valida as condições de saída
-        is_outside, action_type = await self.is_price_outside_range_sustained(lower_price, upper_price)
-
-        if not is_outside:
-            return position
-
-        logging.warning(f"🚨 AÇÃO ACIONADA [{action_type}]! A processar fecho...")
-
-        # Fecha a posição na Orca em qualquer um dos cenários de saída
-        is_closed_orca = await self.close_position_dex()
-
-        if is_closed_orca:
-            logging.info("✅ Posição da Orca fechada com sucesso.")
-
-            self.peak_pnl_orca = 0.0
-
-            # SE O MOTIVO FOI O PREJUÍZO LIMITE, ABRIMOS O SHORT NA HYPERLIQUID
-            if action_type == action_type.STOP_LOSS_REVERSE_TO_HL:
-                logging.info("🔄 A executar estratégia de inversão: Abrir Short na Hyperliquid...")
-                market_status = await self.meteora_client.get_status()
-                await self.open_position_hl(market_status.raw_price)
-
-            self.out_of_range_since = None
-            return None  # Retorna None para recomeçar o ciclo limpo
-        else:
-            logging.error("❌ Falha ao fechar a posição na Orca neste ciclo.")
-            return position
 
     async def check_and_close_management(self, position: PositionStatus) -> PositionStatus | None:
         if position is None or position.size != 1:
@@ -356,21 +387,15 @@ class DeltaNeutralSniperAggressiveBot:
             return position
 
     async def check_and_close_hl_management(self, position_hl) -> None:
-        """
-        Monitoriza a posição de Short na Hyperliquid.
-        Quando atingir o lucro desejado ou o mercado estabilizar, fecha o short e reinicia a Orca.
-        """
         hl_pnl, hl_balance, _ = await self.hl_client.get_balance()
-
-        # Define a tua meta de lucro para o short (ex: o mesmo target ou adaptado à queda)
-        short_profit_target = self.total_usdc_capital * self.profit_target_pct * 1.2  # Exemplo: alvo ligeiramente maior na queda
+        short_profit_target = self.total_usdc_capital * self.profit_target_pct * 1.2
 
         logging.info(
             f"🐻 [Modo Short Ativo] PnL atual da Hyperliquid: ${hl_pnl:.2f} (Alvo: +${short_profit_target:.2f})")
 
-        # CONDIÇÃO 1: Atingiu o lucro no short
-        should_close_hl, self.peak_pnl_hl = self._evaluate_trailing_profit(
-            hl_pnl, self.peak_pnl_hl, short_profit_target, "Short HL", True
+        # Condição normal de Trailing Take Profit
+        should_close_hl, self.peak_pnl_hl = await self._evaluate_position_exit(
+            hl_pnl, self.peak_pnl_hl, short_profit_target, MarketAction.CONTINUE_SHORT, "Short HL", True
         )
 
         if should_close_hl:
@@ -383,6 +408,11 @@ class DeltaNeutralSniperAggressiveBot:
         return None
 
     async def loop_management(self) -> None | PositionStatus:
+        if self.waiting_for_retrace:
+            await self.handle_retrace()
+            await asyncio.sleep(10)  # Pequena pausa para não saturar o ciclo enquanto aguarda o retrace
+            return None
+
         position_dex = await self.meteora_client.get_position()
         position_hl = await self.hl_client.get_position()
 
@@ -443,134 +473,77 @@ class DeltaNeutralSniperAggressiveBot:
             return now
         return last_heartbeat
 
-    async def should_wait_for_market(self):
-        """
-        Retorna True se o bot deve pausar a operação (modo de espera),
-        e False se estiver apto para operar.
-        """
+    async def should_wait_for_market(self) -> bool:
         current_time = time.time()
         MAX_RANGE_PCT = 0.05
         CALC_INTERVAL = 100
-        TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
+        TURBULENCE_THRESHOLD = 0.005
 
-        # 1. 🎯 COOLDOWN INTELIGENTE POR RETRACE DE PREÇO (COM SALVAGUARDAS)
-        if getattr(self, 'waiting_for_retrace', False):
-
-            # A. TIMEOUT DE SEGURANÇA: Se passarem 15 minutos (900s) e o preço nunca lá foi, desiste do retrace para não ficar preso!
-            if current_time - getattr(self, 'retrace_start_time', current_time) > 900:
-                logging.warning(
-                    "⚠️ [Retrace Timeout] O mercado não fez o ressalto esperado em 15 minutos. A cancelar espera inteligente.")
-                self.waiting_for_retrace = False
-                return False  # Liberta o bot para reavaliar o mercado normalmente
-
-            market_status = await self.meteora_client.get_status()
-            current_price = market_status.raw_price
-
-            # B. Verifica se o preço atingiu o alvo do ressalto
-            if current_price >= self.target_short_price:
-
-                # C. FILTRO DE SEGURANÇA CRUCIAL: O preço subiu, mas qual é a direção da turbulência?
-                # Se o mercado estiver em turbulência mas a subir violentamente contra ti, NÃO ENTRES!
-                is_turbulent, direction = await self.hl_client.is_market_turbulent(
-                    threshold=TURBULENCE_THRESHOLD)
-
-                if is_turbulent and direction == DirectionMarket.UP:
-                    logging.warning(
-                        f"🚨 [Abortar Short] O preço atingiu o target de retrace (${current_price:.4f}), MAS o mercado está em turbulência EM ALTA ({direction}). Falso ressalto! A cancelar Short para evitar desastre.")
-                    self.waiting_for_retrace = False
-                    self.cooldown_until = current_time + 300  # Castigo de 5 min por falso alarme
-                    return False
-
-                logging.info(
-                    f"🎯 [Retrace Atingido com Sucesso!] Preço atual ({current_price:.4f}) alcançou o alvo (${self.target_short_price:.4f}). "
-                    f"A disparar Short para compensar a Orca!")
-
-                self.waiting_for_retrace = False  # Desativa a espera
-
-                # Dispara o Short de forma segura
-                await self.open_position_hl(current_price)
-                return True
-            else:
-                # O preço ainda não chegou lá acima. Continua em espera inteligente.
-                return True
-
-        # 2. 🛡️ Cooldown Geral de Transição Temporal
-        if hasattr(self, 'cooldown_until') and current_time < self.cooldown_until:
-            time_left = int(self.cooldown_until - current_time)
-            logging.info(
-                f"⏳ [Cooldown Geral Ativo] O bot está em quarentena. Faltam {time_left}s para poder operar/inverter.")
+        # 1. Cooldown Geral
+        if self.cooldown_until and current_time < self.cooldown_until:
             return True
 
-        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD)
+        # 2. Turbulência Geral (já integrada no engine, mas mantemos o check rápido ou delegamos)
+        is_turbulent, _ = await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD)
         if is_turbulent:
             self.cooldown_until = current_time + 60
-            logging.warning("⚠️ Mercado turbulento detetado (Amplitude elevada). Pausando.")
             return True
 
-        # 3. Verifica se precisamos de atualizar o range da Hyperliquid
+        # 3. 🧠 FILTRO INTELIGENTE DE RSI USANDO O MOTOR CENTRAL
+        can_open_long = await self.evaluate_market_condition(MarketAction.OPEN_LONG)
+        if not can_open_long:
+            self.cooldown_until = current_time + 900
+            logging.warning(
+                "⚠️ [Filtro RSI Central] Mercado desfavorável para abrir posição (Extremos ou Momentum oposto). Cooldown de 15m.")
+            return True
+
+        # 4. Verificação de Range da Hyperliquid
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
-            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
-                                                                                       lookback=self.lookback_range,
-                                                                                       buffer=self.range_margin_pct)
+            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(
+                limit=self.lookback_limit, lookback=self.lookback_range, buffer=self.range_margin_pct
+            )
             self.last_calculation_time = current_time
 
-        # 4. Verifica se o range é abusivo
         if self.last_known_range > MAX_RANGE_PCT:
-            if current_time < self.cooldown_until:
-                return True
-            else:
-                self.cooldown_until = current_time + self.cooldown_duration_5m
-                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {MAX_RANGE_PCT:.2%}. Cooldown ativo.")
-                return True
+            self.cooldown_until = current_time + self.cooldown_duration_5m
+            return True
 
-        # Mercado está estável
         return False
 
-    async def should_wait_for_market__(self):
-        """
-        Retorna True se o bot deve pausar a operação (modo de espera),
-        e False se estiver apto para operar.
-        """
+    async def handle_retrace(self) -> bool:
+        if not self.waiting_for_retrace:
+            return False
+
         current_time = time.time()
-        MAX_RANGE_PCT = 0.05
-        CALC_INTERVAL = 100
-        # COOLDOWN_DURATION = 300
-        TURBULENCE_THRESHOLD = 0.005  # 0.5% de amplitude
 
-        # 1. 🛡️ NOVO: Cooldown Geral de Transição (Pós-Inversão ou Pós-Stop Loss)
-        # Se a variável 'self.cooldown_until' tiver sido definida numa transição recente, o bot fica em pausa obrigatória.
-        if hasattr(self, 'cooldown_until') and current_time < self.cooldown_until:
-            time_left = int(self.cooldown_until - current_time)
-            # Só faz log a cada X tempo ou mantém simples para não inundar a consola (podes ajustar)
-            logging.info(
-                f"⏳ [Cooldown Geral Ativo] O bot está em quarentena. Faltam {time_left}s para poder operar/inverter.")
+        # A. Timeout de 15 minutos
+        if current_time - self.retrace_start_time > 900:
+            logging.warning("⚠️ [Retrace Timeout] 15 minutos esgotados. A cancelar retrace e ativar castigo de 1h.")
+            self.waiting_for_retrace = False
+            self.cooldown_until = current_time + 3600
+            return False
+
+        market_status = await self.meteora_client.get_status()
+        current_price = market_status.raw_price
+
+        # B. Se ainda não chegou ao preço alvo, continua focado no retrace
+        if current_price < self.target_short_price:
             return True
 
-        if await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD):
-            self.cooldown_until = current_time + 60  # Cooldown curto de 1min para turbulência
-            logging.warning("⚠️ Mercado turbulento detetado (Amplitude elevada). Pausando.")
-            return True
+        # C. 🧠 Validação global através do Motor de Decisão para Short
+        can_open_short = await self.evaluate_market_condition(MarketAction.OPEN_SHORT)
+        if not can_open_short:
+            logging.warning(
+                "🚨 [Abortar Short] Condições técnicas desfavoráveis no alvo de retrace (Turbulência ou RSI inadequado). A cancelar Short.")
+            self.waiting_for_retrace = False
+            self.cooldown_until = current_time + 300
+            return False
 
-        # Verifica se precisamos de atualizar o range da Hyperliquid
-        if current_time - self.last_calculation_time >= CALC_INTERVAL:
-            self.last_known_range = await self.hl_client.calculate_dynamic_range_width(limit=self.lookback_limit,
-                                                                                       lookback=self.lookback_range,
-                                                                                       buffer=self.range_margin_pct)
-            self.last_calculation_time = current_time
-
-        # Verifica se o range é abusivo
-        if self.last_known_range > MAX_RANGE_PCT:
-            if current_time < self.cooldown_until:
-                # Ainda no tempo de espera
-                return True
-            else:
-                # Acabou de entrar em volatilidade
-                self.cooldown_until = current_time + self.cooldown_duration_5m
-                logging.warning(f"⚠️ Range {self.last_known_range:.2%} > {MAX_RANGE_PCT:.2%}. Cooldown ativo.")
-                return True
-
-        # Mercado está estável
-        return False
+        # D. Tudo aprovado! Dispara o Short
+        logging.info("🎯 [Retrace Bem-Sucedido] Condições validadas pelo motor central. A abrir Short na Hyperliquid.")
+        self.waiting_for_retrace = False
+        await self.open_position_hl(current_price)
+        return True
 
     async def start_sniper_cycle(self):
         await self.hl_client.start()

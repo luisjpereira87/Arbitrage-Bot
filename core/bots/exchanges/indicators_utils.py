@@ -17,15 +17,21 @@ class RsiCondition(enum.Enum):
 class RsiMomentum(enum.Enum):
     COOLING = "COOLING"
     HEATING = "HEATING"
+    EMA_ABOVE = "EMA_ABOVE"
+    EMA_BELOW = "EMA_BELOW"
 
 
 @dataclass
 class RsiResponse:
     value: float
     state: RsiCondition
+    ema: float
     momentum: RsiMomentum
-    is_turning_down: bool
-    is_turning_up: bool
+    crossed_overbought: bool
+    crossed_oversold: bool
+    rsi_crossed_ema_up: bool
+    rsi_crossed_ema_down: bool
+    position_to_ema: RsiMomentum
 
 
 class IndicatorsUtils():
@@ -105,16 +111,21 @@ class IndicatorsUtils():
         return range_percent
 
     @staticmethod
-    def check_rsi_condition(self, period=14) -> RsiResponse:
+    def check_rsi_condition(ohlcv: pd.DataFrame, period=14, ema_period=9) -> RsiResponse:
         """
         Calcula o RSI atual e avalia o contexto técnico para decisões de trading.
         Retorna um dicionário com o valor, estado e indicação de cruzamento/momentum.
         """
-        rsi_series = IndicatorsUtils.rsi(self.ohlcv, length=period)
+        rsi_series = IndicatorsUtils.rsi(ohlcv, length=period)
+
+        rsi_ema_series = rsi_series.ewm(span=ema_period, adjust=False).mean()
 
         # Obter os dois últimos valores para avaliar a direção do momentum
         current_rsi = float(rsi_series.iloc[-1])
         previous_rsi = float(rsi_series.iloc[-2])
+
+        current_ema = float(rsi_ema_series.iloc[-1])
+        previous_ema = float(rsi_ema_series.iloc[-2])
 
         # Determinar o estado base
         if current_rsi >= 75:
@@ -131,5 +142,20 @@ class IndicatorsUtils():
         # Validar momentum (se está a arrefecer ou a intensificar-se)
         momentum = RsiMomentum.COOLING if current_rsi < previous_rsi else RsiMomentum.HEATING
 
-        return RsiResponse(current_rsi, state, momentum, (previous_rsi >= 70 and current_rsi < 70),
-                           (previous_rsi <= 30 and current_rsi > 30))
+        # Cruzamentos da EMA do RSI
+        rsi_crossed_ema_up = (previous_rsi <= previous_ema) and (current_rsi > current_ema)
+        rsi_crossed_ema_down = (previous_rsi >= previous_ema) and (current_rsi < current_ema)
+
+        position_to_ema = RsiMomentum.EMA_ABOVE if current_rsi > current_ema else RsiMomentum.EMA_BELOW
+
+        return RsiResponse(
+            value=current_rsi,
+            ema=current_ema,
+            state=state,
+            momentum=momentum,
+            crossed_overbought=(previous_rsi >= 70 and current_rsi < 70),
+            crossed_oversold=(previous_rsi <= 30 and current_rsi > 30),
+            rsi_crossed_ema_up=rsi_crossed_ema_up,
+            rsi_crossed_ema_down=rsi_crossed_ema_down,
+            position_to_ema=position_to_ema
+        )
