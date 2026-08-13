@@ -217,8 +217,8 @@ class DeltaNeutralSniperAggressiveBot:
             return True, ActionType.TAKE_PROFIT_ORCA
 
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
-        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.005)
-        if orca_pnl <= loss_trigger_limit and is_turbulent and direction == DirectionMarket.DOWN:
+        #is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.005)
+        if orca_pnl <= loss_trigger_limit:
             logging.warning(
                 f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}) e mercado turbulento. A inverter para Short na Hyperliquid!")
             self.out_of_range_since = None
@@ -457,7 +457,7 @@ class DeltaNeutralSniperAggressiveBot:
         if getattr(self, 'waiting_for_retrace', False):
 
             # A. TIMEOUT DE SEGURANÇA: Se passarem 15 minutos (900s) e o preço nunca lá foi, desiste do retrace para não ficar preso!
-            if current_time - getattr(self, 'retrace_start_time', current_time) > 180:
+            if current_time - getattr(self, 'retrace_start_time', current_time) > 900:
                 logging.warning(
                     "⚠️ [Retrace Timeout] O mercado não fez o ressalto esperado em 15 minutos. A cancelar espera inteligente.")
                 self.waiting_for_retrace = False
