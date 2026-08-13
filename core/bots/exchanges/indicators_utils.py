@@ -1,5 +1,31 @@
+import enum
+from dataclasses import dataclass
+
 import pandas as pd
+from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
+
+
+class RsiCondition(enum.Enum):
+    OVERBOUGHT = "OVERBOUGHT"
+    EXTREME_OVERBOUGHT = "EXTREME_OVERBOUGHT"
+    OVERSOLD = "OVERSOLD"
+    NEUTRAL = "NEUTRAL"
+    EXTREME_OVERSOLD = "EXTREME_OVERSOLD"
+
+
+class RsiMomentum(enum.Enum):
+    COOLING = "COOLING"
+    HEATING = "HEATING"
+
+
+@dataclass
+class RsiResponse:
+    value: float
+    state: RsiCondition
+    momentum: RsiMomentum
+    is_turning_down: bool
+    is_turning_up: bool
 
 
 class IndicatorsUtils():
@@ -10,10 +36,9 @@ class IndicatorsUtils():
     def atr(ohlcv: pd.DataFrame, length=14):
         return AverageTrueRange(ohlcv["high"], ohlcv["low"], ohlcv["close"], window=length).average_true_range()
 
-        # ohlcv.ta.atr(length=length, append=True)
-        # col_name = f"ATRr_{length}"
-        # print("aquiii", ohlcv)
-        # return ohlcv[col_name]
+    @staticmethod
+    def rsi(ohlcv: pd.DataFrame, length=14):
+        return RSIIndicator(close=ohlcv["close"], window=length).rsi()
 
     @staticmethod
     def calculate_dynamic_range_width__(ohlcv: pd.DataFrame, length=14, multiplier=1.5):
@@ -78,3 +103,33 @@ class IndicatorsUtils():
         current_price = ohlcv['close'].iloc[-1]
         range_percent = channel_width / current_price
         return range_percent
+
+    @staticmethod
+    def check_rsi_condition(self, period=14) -> RsiResponse:
+        """
+        Calcula o RSI atual e avalia o contexto técnico para decisões de trading.
+        Retorna um dicionário com o valor, estado e indicação de cruzamento/momentum.
+        """
+        rsi_series = IndicatorsUtils.rsi(self.ohlcv, length=period)
+
+        # Obter os dois últimos valores para avaliar a direção do momentum
+        current_rsi = float(rsi_series.iloc[-1])
+        previous_rsi = float(rsi_series.iloc[-2])
+
+        # Determinar o estado base
+        if current_rsi >= 75:
+            state = RsiCondition.EXTREME_OVERBOUGHT
+        elif current_rsi >= 70:
+            state = RsiCondition.OVERBOUGHT
+        elif current_rsi <= 25:
+            state = RsiCondition.EXTREME_OVERSOLD
+        elif current_rsi <= 30:
+            state = RsiCondition.OVERSOLD
+        else:
+            state = RsiCondition.NEUTRAL
+
+        # Validar momentum (se está a arrefecer ou a intensificar-se)
+        momentum = RsiMomentum.COOLING if current_rsi < previous_rsi else RsiMomentum.HEATING
+
+        return RsiResponse(current_rsi, state, momentum, (previous_rsi >= 70 and current_rsi < 70),
+                           (previous_rsi <= 30 and current_rsi > 30))
