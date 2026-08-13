@@ -501,7 +501,8 @@ class DeltaNeutralSniperAggressiveBot:
                 f"⏳ [Cooldown Geral Ativo] O bot está em quarentena. Faltam {time_left}s para poder operar/inverter.")
             return True
 
-        if await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD):
+        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD)
+        if is_turbulent:
             self.cooldown_until = current_time + 60
             logging.warning("⚠️ Mercado turbulento detetado (Amplitude elevada). Pausando.")
             return True
