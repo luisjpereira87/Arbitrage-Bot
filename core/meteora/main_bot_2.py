@@ -266,8 +266,12 @@ class DeltaNeutralSniperAggressiveBot:
         Retorna (should_action, action_type)
         action_type pode ser: 'TAKE_PROFIT_ORCA', 'STOP_LOSS_REVERSE_TO_HL', 'OUT_OF_RANGE_CLOSE'
         """
+        hl_pnl, _, _ = await self.hl_client.get_balance()
+        hl_pnl = hl_pnl if hl_pnl is not None else 0.0
         position_data = await self.meteora_client.get_position()
         orca_pnl = position_data.pnlUsd if position_data is not None else 0.0
+
+        total_pnl = (hl_pnl + orca_pnl - self.hyperliquid_fees)
 
         # Alvos baseados apenas na Orca
         profit_target = self.total_usdc_capital * self.profit_target_pct
@@ -277,16 +281,16 @@ class DeltaNeutralSniperAggressiveBot:
 
         # 1. TAKE PROFIT: Atingiu a meta de lucro na Orca
         should_close_orca, self.peak_pnl_orca = await self._evaluate_position_exit(
-            orca_pnl, self.peak_pnl_orca, profit_target, MarketAction.CONTINUE_LONG, "Orca", False
+            total_pnl, self.peak_pnl_orca, profit_target, MarketAction.CONTINUE_LONG, "Orca", False
         )
         if should_close_orca:
             return True, ActionType.TAKE_PROFIT_ORCA
 
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
-        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.003)
-        if orca_pnl <= loss_trigger_limit and is_turbulent and direction == DirectionMarket.DOWN:
+        # is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.003)
+        if orca_pnl <= loss_trigger_limit:
             logging.warning(
-                f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}) e mercado turbulento. A inverter para Short na Hyperliquid!")
+                f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}). A abrir Short na Hyperliquid!")
             self.out_of_range_since = None
             return True, ActionType.STOP_LOSS_REVERSE_TO_HL
 
@@ -336,56 +340,47 @@ class DeltaNeutralSniperAggressiveBot:
 
         return False, ActionType.NONE
 
-    async def check_and_close_management(self, position: PositionStatus) -> PositionStatus | None:
-        if position is None or position.size != 1:
-            return position
+    async def check_and_close_management(self, position: PositionStatus | None) -> PositionStatus | None:
+        # CASO RESIDUAL: Apenas HL aberta (Orca já fechou)
+        if position is None:
+            position_hl = await self.hl_client.get_position()
+            if position_hl is not None:
+                hl_pnl, _, _ = await self.hl_client.get_balance()
+                if hl_pnl >= 0.0:  # Fecha se estiver no break-even ou lucro
+                    logging.info("🧹 Fechando Short residual na HL...")
+                    await self.close_position_hl()
+            return None
 
-        lower_price = position.lowerPrice
-        upper_price = position.upperPrice
-
-        # Valida as condições de saída
+        # CASO NORMAL OU HÍBRIDO (Orca aberta)
+        lower_price, upper_price = position.lowerPrice, position.upperPrice
         is_outside, action_type = await self.is_price_outside_range_sustained(lower_price, upper_price)
 
-        if not is_outside:
+        # 1. Proteção: Se prejuízo na Orca, abre HL (se não estiver aberta)
+        if is_outside and action_type == ActionType.STOP_LOSS_REVERSE_TO_HL:
+            if await self.hl_client.get_position() is None:
+                logging.warning("🚨 Prejuízo crítico. Ativando Hedge na Hyperliquid...")
+                await self.open_position_hl((await self.meteora_client.get_status()).raw_price)
             return position
 
-        logging.warning(f"🚨 AÇÃO ACIONADA [{action_type}]! A processar fecho...")
+        # 2. Fecho: Se sinal de saída, fecha tudo
+        if is_outside:
+            logging.warning(f"🚨 AÇÃO [{action_type}]! Encerrando todas as posições...")
 
-        # Guarda o PnL atual da Orca antes de fechar (para sabermos quanto perdemos)
-        orca_pnl_at_close = position.pnlUsd
+            # Fecha a DEX
+            if await self.close_position_dex():
+                logging.info("✅ Orca fechada.")
+                # Fecha a HL se existir
+                if await self.hl_client.get_position() is not None:
+                    await self.close_position_hl()
 
-        # Fecha a posição na Orca em qualquer um dos cenários de saída
-        is_closed_orca = await self.close_position_dex()
+                self.peak_pnl_orca = 0.0
+                self.out_of_range_since = None
+                self.cooldown_until = time.time() + self.cooldown_duration_5m
+                return None
 
-        if is_closed_orca:
-            logging.info("✅ Posição da Orca fechada com sucesso.")
-            self.peak_pnl_orca = 0.0
+        return position
 
-            # SE O MOTIVO FOI O PREJUÍZO LIMITE, PREPARAMOS O SHORT INTELIGENTE COM RETRACE
-            if action_type == ActionType.STOP_LOSS_REVERSE_TO_HL:
-                market_status = await self.meteora_client.get_status()
-                current_market_price = market_status.raw_price
-
-                # 🎯 LÓGICA DO RETRACE INTELIGENTE:
-                # Como vais abrir um Short, queres que o preço suba ligeiramente (faça um retrace)
-                # para entrares num ponto mais alto, compensando o prejuízo de ${abs(orca_pnl_at_close):.2f} da Orca.
-                # Criamos um offset proporcional ao prejuízo sofrido.
-                price_offset = current_market_price * 0.002  # Exemplo: 0.2% de ressalto técnico
-
-                self.target_short_price = current_market_price + price_offset
-                self.orca_loss_to_compensate = abs(orca_pnl_at_close)
-                self.waiting_for_retrace = True
-                self.retrace_start_time = time.time()
-
-                logging.info(f"🎯 [Retrace Ativo] Orca fechada com prejuízo de ${self.orca_loss_to_compensate:.2f}. "
-                             f"A aguardar que o preço suba até ${self.target_short_price:.4f} para abrir o Short cirurgicamente!")
-
-            self.out_of_range_since = None
-            return None
-        else:
-            logging.error("❌ Falha ao fechar a posição na Orca neste ciclo.")
-            return position
-
+    """
     async def check_and_close_hl_management(self, position_hl) -> None:
         hl_pnl, hl_balance, _ = await self.hl_client.get_balance()
         short_profit_target = self.total_usdc_capital * self.profit_target_pct * 1.2
@@ -406,37 +401,27 @@ class DeltaNeutralSniperAggressiveBot:
                 self.cooldown_until = time.time() + self.cooldown_duration_15m
             return None
         return None
+    """
 
     async def loop_management(self) -> None | PositionStatus:
-        if self.waiting_for_retrace:
-            await self.handle_retrace()
-            await asyncio.sleep(10)  # Pequena pausa para não saturar o ciclo enquanto aguarda o retrace
-            return None
-
         position_dex = await self.meteora_client.get_position()
-        position_hl = await self.hl_client.get_position()
 
-        # CASO 1: Tudo vazio -> Abre nova posição na Orca
-        if position_dex is None and position_hl is None:
-            if not await self.should_wait_for_market():
-                return await self.open_position_management(position_dex)
-            else:
-                await asyncio.sleep(10)
-            return None
-
-        # CASO 2: Apenas a Orca está ativa -> Gestão normal de range/lucro/prejuízo
-        if position_dex is not None and position_hl is None:
+        # O loop só precisa de saber se temos algo a gerir: ou Orca, ou HL (se não houver Orca)
+        if position_dex is not None:
             return await self.check_and_close_management(position_dex)
 
-        # CASO 3: Apenas o Short da Hyperliquid está ativo -> Monitorizar para fechar e voltar à Orca!
-        if position_dex is None and position_hl is not None:
-            return await self.check_and_close_hl_management(position_hl)
-
-        # CASO DE SEGURANÇA: Se por algum erro houver ambos ativos ao mesmo tempo, limpa a DEX para alinhar
-        if position_dex is not None and position_hl is not None:
-            logging.warning("⚠️ Estado anómalo: Orca e Hyperliquid ativas em simultâneo. A fechar Orca...")
-            await self.close_position_dex()
+        # Se não há Orca, verifica se ainda resta algo na HL que precise de fecho residual
+        position_hl = await self.hl_client.get_position()
+        if position_hl is not None:
+            await self.check_and_close_management(None)  # Passamos None para tratar o caso residual
             return None
+
+        # Se tudo vazio, tenta abrir
+        if not await self.should_wait_for_market():
+            return await self.open_position_management(None)
+
+        await asyncio.sleep(10)
+        return None
 
     async def open_position_management(self, position: PositionStatus | None) -> PositionStatus | None:
         if position is None:
@@ -510,6 +495,7 @@ class DeltaNeutralSniperAggressiveBot:
 
         return False
 
+    """
     async def handle_retrace(self) -> bool:
         if not self.waiting_for_retrace:
             return False
@@ -544,6 +530,7 @@ class DeltaNeutralSniperAggressiveBot:
         self.waiting_for_retrace = False
         await self.open_position_hl(current_price)
         return True
+    """
 
     async def start_sniper_cycle(self):
         await self.hl_client.start()
