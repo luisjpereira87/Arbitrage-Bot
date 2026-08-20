@@ -483,6 +483,7 @@ class DeltaNeutralSniperAggressiveBot:
             return True
 
         # 4. Verificação de Range da Hyperliquid
+        """
         if current_time - self.last_calculation_time >= CALC_INTERVAL:
             self.last_known_range = await self.hl_client.calculate_dynamic_range_width(
                 limit=self.lookback_limit, lookback=self.lookback_range, buffer=self.range_margin_pct
@@ -492,7 +493,7 @@ class DeltaNeutralSniperAggressiveBot:
         if self.last_known_range > MAX_RANGE_PCT:
             self.cooldown_until = current_time + self.cooldown_duration_5m
             return True
-
+        """
         return False
 
     """
