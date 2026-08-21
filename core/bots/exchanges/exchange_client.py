@@ -43,7 +43,7 @@ class ExchangeClient(ExchangeBase, ABC):
             # 🎯 A MÁGICA: Substituímos o método do CCXT permanentemente aqui no init!
             # A partir deste momento, sempre que o CCXT precisar de um nonce, ele chama a nossa função robusta
             self.exchange.fetch_nonce = self._custom_fetch_nonce_lighter
-            self.exchange.create_order = self.create_order_patched
+            #self.exchange.create_order = self.create_order_patched
 
     def get_name(self):
         return "hyperliquid"
