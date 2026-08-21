@@ -100,13 +100,14 @@ class DeltaNeutralSniperAggressiveBot:
                     f"🚨 [{label}] Stop-Loss acionado! PnL atual: ${current_pnl:.2f} (Limite: ${stop_loss_limit:.2f})")
                 return True, 0.0
 
+        """
         # A. Validação Técnica (Decisão Antecipada) - SÓ FECHA SE O PNL FOR POSITIVO (>= 0)
         # Se o mercado azedar mas estivermos em prejuízo, IGNORAMOS o RSI para não realizar perdas estúpidas.
         if current_pnl >= 0.0:
             if not await self.evaluate_market_condition(action):
                 logging.info(f"🛑 [{label}] Fecho técnico acionado pelo RSI/EMA (com PnL positivo: ${current_pnl:.2f}).")
                 return True, 0.0
-
+        """
         # B. Lógica de Trailing (O PnL dita a regra)
         if current_pnl < target_profit:
             return False, 0.0
