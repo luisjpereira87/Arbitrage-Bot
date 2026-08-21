@@ -182,6 +182,35 @@ class DeltaNeutralSniperAggressiveBot:
 
         return True
 
+    async def can_open_short_hedge(self) -> bool:
+        """
+        Avalia se é seguro abrir o Short defensivo na HL,
+        filtrando a armadilha do RSI a recuar aos 50 (falsa consolidação pós-rally).
+        """
+        rsi_info = await self.hl_client.check_rsi_condition()
+        
+        # 1. Se ainda estiver em sobrecompra óbvia, nunca abrir short
+        if rsi_info.state in [RsiCondition.OVERBOUGHT, RsiCondition.EXTREME_OVERBOUGHT]:
+            return False
+            
+        # 2. Se o momentum ainda estiver a aquecer para cima
+        if rsi_info.position_to_ema == RsiMomentum.EMA_ABOVE and rsi_info.momentum == RsiMomentum.HEATING:
+            return False
+            
+        # 3. VALIDAÇÃO ESPECÍFICA DA ZONA DOS 50 (Falsa Acalmia)
+        # Se o RSI recuou para a zona neutra/média (ex: entre 45 e 55) 
+        # mas a estrutura de preço ainda está a arrefecer de um movimento de alta, 
+        # bloqueamos o short para evitar o ressalto imediato.
+        current_rsi = getattr(rsi_info, 'current_rsi', 50.0) # Assume 50 se o atributo tiver outro nome
+        
+        if 45.0 <= current_rsi <= 55.0:
+            # Se o momentum for de cooling ou a posição face à EMA ainda for neutra-alta, é uma armadilha
+            if rsi_info.momentum == RsiMomentum.COOLING or rsi_info.position_to_ema == RsiMomentum.EMA_ABOVE:
+                logging.info(f"🛑 [Short Rejeitado] RSI na zona dos 50 ({current_rsi:.1f}) com momentum de cooling. Risco de falso descanso e novo pump!")
+                return False
+
+        return True
+
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
         capital_para_hedge = self.total_usdc_capital / 2
         _, usdc_hl_leg = await self.hl_client.adjust_balance(capital_para_hedge, price_token)
@@ -289,7 +318,8 @@ class DeltaNeutralSniperAggressiveBot:
 
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
         # is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.003)
-        if orca_pnl <= loss_trigger_limit:
+        is_can_open_short_hedge = await self.can_open_short_hedge()
+        if orca_pnl <= loss_trigger_limit and is_can_open_short_hedge:
             logging.warning(
                 f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}). A abrir Short na Hyperliquid!")
             self.out_of_range_since = None
