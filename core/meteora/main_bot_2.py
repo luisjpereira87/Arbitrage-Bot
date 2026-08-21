@@ -148,7 +148,7 @@ class DeltaNeutralSniperAggressiveBot:
             # Não abrir Long se estivermos em extremos de sobrecompra ou se a EMA estiver a apontar para baixo
             if rsi_info.state in [RsiCondition.OVERBOUGHT, RsiCondition.EXTREME_OVERBOUGHT]:
                 return False
-            if rsi_info.position_to_ema == RsiMomentum.EMA_BELOW and rsi_info.momentum == RsiMomentum.COOLING:
+            if rsi_info.position_to_ema == RsiMomentum.EMA_BELOW:
                 return False
             return True
 
