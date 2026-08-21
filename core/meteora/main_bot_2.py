@@ -92,18 +92,19 @@ class DeltaNeutralSniperAggressiveBot:
         2. Validação técnica (RSI/EMA) através do motor central.
         """
 
-        # A. Validação Técnica (Decisão Antecipada)
-        # Se o motor disser que não devemos continuar, fechamos mesmo que o PnL esteja abaixo do pico
-        if not await self.evaluate_market_condition(action):
-            logging.info(f"🛑 [{label}] Fecho técnico acionado pelo RSI/EMA.")
-            return True, 0.0
-
-        # 1. Validação de Stop Loss (Apenas tiver ativo)
+        # 1. Validação de Stop Loss (Apenas se tiver ativo)
         if is_stop_loss:
             stop_loss_limit = -(target_profit / 2.0)
             if current_pnl <= stop_loss_limit:
                 logging.warning(
                     f"🚨 [{label}] Stop-Loss acionado! PnL atual: ${current_pnl:.2f} (Limite: ${stop_loss_limit:.2f})")
+                return True, 0.0
+
+        # A. Validação Técnica (Decisão Antecipada) - SÓ FECHA SE O PNL FOR POSITIVO (>= 0)
+        # Se o mercado azedar mas estivermos em prejuízo, IGNORAMOS o RSI para não realizar perdas estúpidas.
+        if current_pnl >= 0.0:
+            if not await self.evaluate_market_condition(action):
+                logging.info(f"🛑 [{label}] Fecho técnico acionado pelo RSI/EMA (com PnL positivo: ${current_pnl:.2f}).")
                 return True, 0.0
 
         # B. Lógica de Trailing (O PnL dita a regra)
