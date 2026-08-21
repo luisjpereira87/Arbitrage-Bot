@@ -296,7 +296,7 @@ class DeltaNeutralSniperAggressiveBot:
         Retorna (should_action, action_type)
         action_type pode ser: 'TAKE_PROFIT_ORCA', 'STOP_LOSS_REVERSE_TO_HL', 'OUT_OF_RANGE_CLOSE'
         """
-        hl_pnl, _, _ = await self.hl_client.get_balance()
+        hl_pnl, _, is_hl_position = await self.hl_client.get_balance()
         hl_pnl = hl_pnl if hl_pnl is not None else 0.0
         position_data = await self.meteora_client.get_position()
         orca_pnl = position_data.pnlUsd if position_data is not None else 0.0
@@ -304,7 +304,14 @@ class DeltaNeutralSniperAggressiveBot:
         total_pnl = (hl_pnl + orca_pnl - self.hyperliquid_fees)
 
         # Alvos baseados apenas na Orca
-        profit_target = self.total_usdc_capital * self.profit_target_pct
+        base_profit_target = self.total_usdc_capital * self.profit_target_pct
+
+        if is_hl_position:
+            # Se temos o hedge ativo, queremos fechar depressa com um micro-lucro positivo (ex: $0.05 ou break-even seguro)
+            profit_target = 0.03
+            logging.info(f"🛡️ [Hedge Ativo detectado] Alvo de lucro reduzido para micro-alvo de ${profit_target:.2f} para limpeza rápida.")
+        else:
+            profit_target = base_profit_target
 
         # Exemplo de limiar de prejuízo para inversão (metade do target positivo ou valor fixo ex: -0.03)
         loss_trigger_limit = -(profit_target * 0.5)  # Ou podes fixar ex: -0.03
