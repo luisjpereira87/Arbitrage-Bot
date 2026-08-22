@@ -679,6 +679,6 @@ logging.basicConfig(
 if __name__ == "__main__":
     try:
         cex_bot = CexBot()
-        asyncio.run(cex_bot.test_spread_loop())
+        asyncio.run(cex_bot.run_live_test())
     except KeyboardInterrupt:
         print("\n🛑 Scanner interrompido pelo utilizador.")
