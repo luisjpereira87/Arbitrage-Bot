@@ -13,7 +13,7 @@ WORKDIR /app
 # Clonar e compilar nativamente o lighter-go (v1.0.7) para gerar o .so compatível
 RUN git clone https://github.com/elliottech/lighter-go.git && \
     cd lighter-go && \
-    git checkout v1.0.4 && \
+    git checkout v1.0.3 && \
     cd sharedlib && \
     go build -buildmode=c-shared -o /app/lighter-signer-linux-amd64.so . && \
     cd /app && \
