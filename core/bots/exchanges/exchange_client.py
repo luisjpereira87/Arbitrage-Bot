@@ -43,7 +43,7 @@ class ExchangeClient(ExchangeBase, ABC):
             # 🎯 A MÁGICA: Substituímos o método do CCXT permanentemente aqui no init!
             # A partir deste momento, sempre que o CCXT precisar de um nonce, ele chama a nossa função robusta
             self.exchange.fetch_nonce = self._custom_fetch_nonce_lighter
-            #self.exchange.create_order = self.create_order_patched
+            # self.exchange.create_order = self.create_order_patched
 
     def get_name(self):
         return "hyperliquid"
@@ -668,3 +668,37 @@ class ExchangeClient(ExchangeBase, ABC):
         logging.info(f"⚖️ [PRECISÃO] Ajustado para {clean_qty} SOL | Custo Real: ${actual_cost_usd:.4f}")
 
         return clean_qty, actual_cost_usd
+
+    async def preload_lighter_signer(self):
+        if "lighter" not in str(self.exchange.id).lower():
+            return
+
+        try:
+            await self.exchange.load_markets()
+
+            account_index = self.exchange.options.get('accountIndex', 729593)
+            api_key_index = self.exchange.options.get('apiKeyIndex', 254)
+            chain_id = self.exchange.options.get('chainId', 1)  # Ou o chainId correspondente da mainnet
+
+            # Pega a chave privada formatada para a Lighter
+            private_key = self.exchange.get_lighter_private_key(str(account_index), str(api_key_index))
+
+            logging.info(
+                f"🔑 [SIGNER INIT] A pré-carregar o cliente CGO para Acc={account_index}, API={api_key_index}...")
+
+            # Chamada direta recomendada pelo CCXT para popular a memória CGO
+            signer = await self.exchange.load_account(
+                chain_id,
+                private_key,
+                str(api_key_index),
+                str(account_index),
+                {}
+            )
+
+            if signer:
+                logging.info("✅ [SIGNER INIT] Cliente CGO inicializado com sucesso na memória!")
+            else:
+                logging.error("❌ [SIGNER INIT] O signer retornou vazio.")
+
+        except Exception as e:
+            logging.error(f"💥 [SIGNER INIT] Erro ao pré-carregar o account signer: {e}")

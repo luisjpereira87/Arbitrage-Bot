@@ -657,6 +657,7 @@ class CexBot:
         try:
             # 3. Executa a ordem de venda pequena
             # Ajusta o symbol e amount para algo seguro
+            await self.lighter_exchange.preload_lighter_signer()
             order = await self.lighter_exchange.open_new_position(
                 "BTC/USDC:USDC",
                 1.0,
