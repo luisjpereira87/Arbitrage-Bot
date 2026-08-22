@@ -34,7 +34,7 @@ async def run():
     delta_bot = DeltaNeutralSniperAggressiveBot(usdc_min_hl=15, total_usdc_capital=30, profit_target_pct=0.006,
                                                 sdk_file_path="orca_bot.js")
     await asyncio.gather(
-        cex_bot.test_spread_loop(),
+        cex_bot.run_live_test(),
         delta_bot.start_sniper_cycle()
     )
 
