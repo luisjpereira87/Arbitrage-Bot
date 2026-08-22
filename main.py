@@ -5,9 +5,6 @@ import sys
 
 from dotenv import load_dotenv
 
-from core.bots.cex_bot import CexBot
-from core.config.properties_dex import PropertiesDex
-from core.config.properties_multi import PropertiesMulti
 from core.meteora.main_bot_2 import DeltaNeutralSniperAggressiveBot
 
 """
@@ -32,18 +29,18 @@ logging.getLogger("solana").setLevel(logging.WARNING)
 
 
 async def run():
-    cex_bot = CexBot()
+    # cex_bot = CexBot()
     delta_bot = DeltaNeutralSniperAggressiveBot(usdc_min_hl=15, total_usdc_capital=30, profit_target_pct=0.006,
                                                 sdk_file_path="orca_bot.js")
     await asyncio.gather(
-        cex_bot.test_spread_loop(),
+        # cex_bot.test_spread_loop(),
         delta_bot.start_sniper_cycle()
     )
 
 
 if __name__ == '__main__':
-    properties_multi = PropertiesMulti()
-    properties_dex = PropertiesDex()
+    # properties_multi = PropertiesMulti()
+    # properties_dex = PropertiesDex()
     # abi = load_abi()
 
     # --- EXECUÇÃO -

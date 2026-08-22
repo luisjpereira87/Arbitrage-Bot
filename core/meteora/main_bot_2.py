@@ -189,25 +189,28 @@ class DeltaNeutralSniperAggressiveBot:
         filtrando a armadilha do RSI a recuar aos 50 (falsa consolidação pós-rally).
         """
         rsi_info = await self.hl_client.check_rsi_condition()
-        
+
         # 1. Se ainda estiver em sobrecompra óbvia, nunca abrir short
         if rsi_info.state in [RsiCondition.OVERBOUGHT, RsiCondition.EXTREME_OVERBOUGHT]:
             return False
-            
+
         # 2. Se o momentum ainda estiver a aquecer para cima
         if rsi_info.position_to_ema == RsiMomentum.EMA_ABOVE and rsi_info.momentum == RsiMomentum.HEATING:
             return False
-            
+
         # 3. VALIDAÇÃO ESPECÍFICA DA ZONA DOS 50 (Falsa Acalmia)
         # Se o RSI recuou para a zona neutra/média (ex: entre 45 e 55) 
         # mas a estrutura de preço ainda está a arrefecer de um movimento de alta, 
         # bloqueamos o short para evitar o ressalto imediato.
-        current_rsi = getattr(rsi_info, 'current_rsi', 50.0) # Assume 50 se o atributo tiver outro nome
-        
+        current_rsi = getattr(rsi_info, 'current_rsi', 50.0)  # Assume 50 se o atributo tiver outro nome
+
         if 45.0 <= current_rsi <= 55.0:
             # Se o momentum for de cooling ou a posição face à EMA ainda for neutra-alta, é uma armadilha
             if rsi_info.momentum == RsiMomentum.COOLING or rsi_info.position_to_ema == RsiMomentum.EMA_ABOVE:
-                logging.info(f"🛑 [Short Rejeitado] RSI na zona dos 50 ({current_rsi:.1f}) com momentum de cooling. Risco de falso descanso e novo pump!")
+                """
+                logging.info(
+                    f"🛑 [Short Rejeitado] RSI na zona dos 50 ({current_rsi:.1f}) com momentum de cooling. Risco de falso descanso e novo pump!")
+                """
                 return False
 
         return True
@@ -310,12 +313,18 @@ class DeltaNeutralSniperAggressiveBot:
         if is_hl_position:
             # Se temos o hedge ativo, queremos fechar depressa com um micro-lucro positivo (ex: $0.05 ou break-even seguro)
             profit_target = 0.03
-            logging.info(f"🛡️ [Hedge Ativo detectado] Alvo de lucro reduzido para micro-alvo de ${profit_target:.2f} para limpeza rápida.")
+            """
+            logging.info(
+                f"🛡️ [Hedge Ativo detectado] Alvo de lucro reduzido para micro-alvo de ${profit_target:.2f} para limpeza rápida.")
+            """
         else:
             profit_target = base_profit_target
 
         # Exemplo de limiar de prejuízo para inversão (metade do target positivo ou valor fixo ex: -0.03)
         loss_trigger_limit = -(profit_target * 0.5)  # Ou podes fixar ex: -0.03
+
+        min_loss_trigger = -(profit_target * 0.5)
+        max_loss_trigger = -(profit_target * 0.6)
 
         # 1. TAKE PROFIT: Atingiu a meta de lucro na Orca
         should_close_orca, self.peak_pnl_orca = await self._evaluate_position_exit(
@@ -327,7 +336,8 @@ class DeltaNeutralSniperAggressiveBot:
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
         # is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.003)
         is_can_open_short_hedge = await self.can_open_short_hedge()
-        if orca_pnl <= loss_trigger_limit and is_can_open_short_hedge:
+        is_in_loss_window = max_loss_trigger <= orca_pnl <= min_loss_trigger
+        if is_in_loss_window and is_can_open_short_hedge and not is_hl_position:
             logging.warning(
                 f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}). A abrir Short na Hyperliquid!")
             self.out_of_range_since = None
@@ -419,29 +429,29 @@ class DeltaNeutralSniperAggressiveBot:
 
         return position
 
-    """
     async def check_and_close_hl_management(self, position_hl) -> None:
         hl_pnl, hl_balance, _ = await self.hl_client.get_balance()
         short_profit_target = self.total_usdc_capital * self.profit_target_pct * 1.2
 
+        """
         logging.info(
             f"🐻 [Modo Short Ativo] PnL atual da Hyperliquid: ${hl_pnl:.2f} (Alvo: +${short_profit_target:.2f})")
-
+        """
         # Condição normal de Trailing Take Profit
         should_close_hl, self.peak_pnl_hl = await self._evaluate_position_exit(
-            hl_pnl, self.peak_pnl_hl, short_profit_target, MarketAction.CONTINUE_SHORT, "Short HL", True
+            hl_pnl, self.peak_pnl_hl, short_profit_target, MarketAction.CONTINUE_SHORT, "Short HL", False
         )
 
         if should_close_hl:
             is_closed = await self.close_position_hl()
             if is_closed:
-                logging.info("✅ Short fechado no topo com sucesso. A voltar para a Orca.")
+                logging.info("✅ Short fechado no topo com sucesso. Lucro trancado! A voltar a focar na Orca.")
                 self.peak_pnl_hl = 0.0
                 self.cooldown_until = time.time() + self.cooldown_duration_15m
             return None
         return None
-    """
 
+    """
     async def loop_management(self) -> None | PositionStatus:
         position_dex = await self.meteora_client.get_position()
 
@@ -452,10 +462,36 @@ class DeltaNeutralSniperAggressiveBot:
         # Se não há Orca, verifica se ainda resta algo na HL que precise de fecho residual
         position_hl = await self.hl_client.get_position()
         if position_hl is not None:
-            await self.check_and_close_management(None)  # Passamos None para tratar o caso residual
+            # await self.check_and_close_management(None)  # Passamos None para tratar o caso residual
+            await self.check_and_close_hl_management(position_hl)
             return None
 
         # Se tudo vazio, tenta abrir
+        if not await self.should_wait_for_market():
+            return await self.open_position_management(None)
+
+        await asyncio.sleep(10)
+        return None
+    """
+
+    async def loop_management(self) -> None | PositionStatus:
+        position_dex = await self.meteora_client.get_position()
+        position_hl = await self.hl_client.get_position()
+
+        # 1. Se houver short na HL aberto, gere sempre o lucro/fecho dele em primeiro lugar
+        if position_hl is not None:
+            await self.check_and_close_hl_management(position_hl)
+
+        # 2. Se houver posição na Orca, gere o range, take profit da orca e abertura de hedge
+        if position_dex is not None:
+            return await self.check_and_close_management(position_dex)
+
+        # 3. Se a Orca fechou mas o short da HL ainda lá estava (e não foi fechado acima),
+        # o passo 1 já tratou dele. Se chegamos aqui, ambas estão vazias.
+        if position_hl is not None:
+            return None
+
+        # 4. Se tudo vazio, tenta abrir nova posição
         if not await self.should_wait_for_market():
             return await self.open_position_management(None)
 
