@@ -5,19 +5,13 @@ RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
     git \
-    golang-go \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Clonar e compilar nativamente o lighter-go (v1.0.7) para gerar o .so compatível
-RUN git clone https://github.com/elliottech/lighter-go.git && \
-    cd lighter-go && \
-    git checkout v1.0.7 && \
-    cd sharedlib && \
-    go build -buildmode=c-shared -o /app/lighter-signer-linux-amd64.so . && \
-    cd /app && \
-    rm -rf lighter-go
+# 🟢 Descarregar o binário oficial pré-compilado do repositório da Lighter (compatível com CCXT moderno)
+RUN wget -O /app/lighter-signer-linux-amd64.so https://raw.githubusercontent.com/elliottech/lighter-python/main/lighter/signers/lighter-signer-linux-amd64.so
 
 # Copiar o resto do projeto
 COPY . .
