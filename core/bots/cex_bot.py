@@ -68,6 +68,10 @@ class CexBot:
                         'apiKeyIndex': 254,  # 🟢 O teu ID real de Mainnet!
                         },
         })
+        lighter.accountIndex = 729593
+        lighter.apiKeyIndex = 254
+        lighter.options['accountIndex'] = 729593
+        lighter.options['apiKeyIndex'] = 254
 
         self.watchlist = [
             "BTC/USDC:USDC",
