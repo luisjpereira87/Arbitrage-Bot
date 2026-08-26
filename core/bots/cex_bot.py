@@ -68,10 +68,6 @@ class CexBot:
                         'apiKeyIndex': 254,  # 🟢 O teu ID real de Mainnet!
                         },
         })
-        lighter.accountIndex = 729593
-        lighter.apiKeyIndex = 254
-        lighter.options['accountIndex'] = 729593
-        lighter.options['apiKeyIndex'] = 254
 
         self.watchlist = [
             "BTC/USDC:USDC",
@@ -683,6 +679,6 @@ logging.basicConfig(
 if __name__ == "__main__":
     try:
         cex_bot = CexBot()
-        asyncio.run(cex_bot.run_live_test())
+        asyncio.run(cex_bot.test_spread_loop())
     except KeyboardInterrupt:
         print("\n🛑 Scanner interrompido pelo utilizador.")

@@ -35,7 +35,7 @@ async def run():
                                                 sdk_file_path="orca_bot.js")
     await asyncio.gather(
         cex_bot.run_live_test(),
-        # delta_bot.start_sniper_cycle()
+        delta_bot.start_sniper_cycle()
     )
 
 
