@@ -1,10 +1,12 @@
 import asyncio
-import builtins
+import json
 import logging
 from abc import ABC
+from pathlib import Path
 from typing import Any
 
 import ccxt.async_support as ccxt
+import lighter
 import pandas as pd
 from ccxt.base.types import OrderType, OrderSide, Num
 
@@ -495,8 +497,124 @@ class ExchangeClient(ExchangeBase, ABC):
             logging.error(f"❌ Erro na validação: {e}")
             return False
 
+    def sign_create_order_with_sdk(self, private_key: str, account_index: int, api_key_index: int, safe_order: dict):
+        """
+        Gera a assinatura criptográfica utilizando a SDK oficial da Lighter em Python puro,
+        evitando a dependência de ficheiros .so/.dylib via ctypes.
+        """
+        # Determinar o URL base do endpoint (ex: testnet ou mainnet conforme a tua config)
+        base_url = getattr(self.exchange, 'options', {}).get('url', 'https://mainnet.zklighter.elliot.ai')
+
+        # Inicializar o SignerClient oficial da Lighter
+        signer_client = lighter.SignerClient(
+            url=base_url,
+            api_private_keys={int(api_key_index): private_key},
+            account_index=int(account_index)
+        )
+
+        # Gerar a assinatura chamando o método nativo da SDK para criação de ordens
+        # A SDK devolve diretamente o tipo de transação (tx_type) e as informações assinadas (tx_info)
+        tx_type, tx_info, tx_hash, err = signer_client.sign_create_order(
+            market_index=int(safe_order['market_index']),
+            client_order_index=int(safe_order['client_order_index']),
+            base_amount=int(safe_order['base_amount']),
+            price=int(safe_order['avg_execution_price']),  # ou o preço correspondente enviado na ordem
+            is_ask=bool(safe_order['is_ask']),
+            order_type=int(safe_order['order_type']),
+            time_in_force=int(safe_order['time_in_force']),
+            reduce_only=bool(safe_order['reduce_only']),
+            trigger_price=int(safe_order.get('trigger_price', 0)),
+            order_expiry=int(safe_order['order_expiry']),
+            nonce=int(safe_order['nonce']),
+            api_key_index=int(api_key_index)
+        )
+
+        return tx_type, tx_info
+
     async def create_order_patched(self, symbol: str, type: OrderType, side: OrderSide, amount: float,
                                    price: Num = None, params={}):
+        # 1. Debug de entrada
+        logging.info(f"🔍 [PATCH] Iniciando create_order para {symbol} | Lado: {side} | Qtd: {amount}")
+
+        await self.exchange.load_markets()
+        accountIndex, params = await self.exchange.handle_account_index(params, 'createOrder', 'accountIndex',
+                                                                        'account_index')
+        params['accountIndex'] = accountIndex
+
+        market = self.exchange.market(symbol)
+        orderRequests = self.exchange.create_order_request(symbol, type, side, amount, price, params)
+
+        order = orderRequests[0]
+        apiKeyIndex = order['api_key_index']
+
+        # 2. Diagnóstico de Identidade
+        logging.info(f"🆔 [PATCH] Identidade: AccountIndex={accountIndex} | ApiKeyIndex={apiKeyIndex}")
+
+        strAccountIndex = self.exchange.number_to_string(accountIndex)
+        strApiKeyIndex = self.exchange.number_to_string(apiKeyIndex)
+
+        # 3. Log de carga do signer (Adaptado para SDK Oficial)
+        logging.info("🔑 [PATCH] A preparar signer via SDK oficial da Lighter...")
+
+        # Recuperamos a chave privada necessária para o signer oficial
+        private_key = self.exchange.get_lighter_private_key(strAccountIndex, strApiKeyIndex)
+
+        # 4. Preparação da assinatura
+        if self.exchange.safe_integer(order, 'nonce') is None:
+            order['nonce'] = await self.exchange.fetch_nonce(accountIndex, apiKeyIndex)
+            logging.info(f"🔢 [PATCH] Nonce obtido: {order['nonce']}")
+
+        try:
+            safe_order = {
+                'market_index': int(order['market_index']),
+                'client_order_index': order['client_order_index'],
+                'base_amount': order['base_amount'],
+                'avg_execution_price': order['avg_execution_price'],
+                'is_ask': order['is_ask'],
+                'order_type': order['order_type'],
+                'time_in_force': order['time_in_force'],
+                'reduce_only': order['reduce_only'],
+                'trigger_price': order['trigger_price'],
+                'order_expiry': order['order_expiry'],
+                'integrator_account_index': order['integrator_account_index'],
+                'integrator_taker_fee': order['integrator_taker_fee'],
+                'integrator_maker_fee': order['integrator_maker_fee'],
+                'nonce': int(order['nonce']),
+                'api_key_index': int(apiKeyIndex),
+                'account_index': int(accountIndex),
+            }
+
+            logging.info("✍️ [PATCH] Assinando transação com a SDK oficial da Lighter...")
+
+            # --- SUBSTITUIÇÃO DO CTYPES PELA SDK OFICIAL ---
+            # Substituímos a chamada antiga baseada em .so/ctypes pela função nativa da Lighter SDK
+            tx_type, tx_info = self.sign_create_order_with_sdk(
+                private_key=private_key,
+                account_index=int(accountIndex),
+                api_key_index=int(apiKeyIndex),
+                safe_order=safe_order
+            )
+            # -----------------------------------------------
+
+            logging.info("✨ [PATCH] Assinatura realizada com sucesso via SDK!")
+
+        except Exception as e:
+            logging.error(f"💥 [PATCH] ERRO NA ASSINATURA: {str(e)}")
+            logging.error(f"📍 [PATCH] Estado no momento do erro: Acc={accountIndex}, ApiKey={apiKeyIndex}")
+            raise e
+
+        request = {'tx_type': tx_type, 'tx_info': tx_info}
+        response = await self.exchange.publicPostSendTx(request)
+        logging.info(f"📥 [PATCH] Resposta da API recebida: {response}")
+
+        combined_data = self.exchange.deep_extend(response, order)
+        combined_data['id'] = response.get('tx_hash')
+        parsed_order = self.exchange.parse_order(combined_data, market)
+        return parsed_order
+
+    """
+    async def create_order_patched_(self, symbol: str, type: OrderType, side: OrderSide, amount: float,
+                                    price: Num = None, params={}):
         # 1. Debug de entrada
         logging.info(f"🔍 [PATCH] Iniciando create_order para {symbol} | Lado: {side} | Qtd: {amount}")
 
@@ -592,6 +710,79 @@ class ExchangeClient(ExchangeBase, ABC):
         logging.info(f"📦 [PATCH] Resultado do parse: {parsed_order}")
 
         return parsed_order
+    """
+
+    async def create_order_patched_(self, symbol, type, side, amount, price=None, params=None):
+        """
+        Método patch que substitui o create_order nativo do CCXT.
+        Redireciona a assinatura e envio para o script em Node.js, evitando o CGO do Linux.
+        """
+        print(f"🔍 [PATCH NODE] Intercetando create_order para {symbol} | Lado: {side} | Qtd: {amount} | Preço: {price}")
+
+        # Normalizar o lado (aceita Signal.SELL, 'sell', 'buy', etc.)
+        side_str = "sell" if str(side).lower() in ["signal.sell", "sell"] else "buy"
+
+        current_dir = Path(__file__).resolve().parent
+        bridge_path = current_dir / "lighter_bridge.js"
+
+        # Comando para chamar o script Node.js
+        cmd = [
+            "node",
+            str(bridge_path),
+            side_str,
+            str(amount),
+            str(price if price else 0)
+        ]
+
+        # Executa o Node.js de forma assíncrona
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            error_msg = stderr.decode().strip() or stdout.decode().strip()
+            print(f"❌ [PATCH NODE] Erro na execução do script Node: {error_msg}")
+            raise Exception(f"Lighter Node Bridge Error: {error_msg}")
+
+        raw_output = stdout.decode().strip()
+
+        try:
+            output_data = json.loads(raw_output)
+            if isinstance(output_data, str):
+                output_data = json.loads(output_data)
+        except json.JSONDecodeError:
+            output_data = {"result": {"hash": "NODE_ORDER_ID"}, "raw_output": raw_output}
+        print(raw_output)
+        # Extração blindada do clientOrderIndex enviado pelo Node
+        output_dict = output_data if isinstance(output_data, dict) else {}
+
+        raw_id = (
+                output_dict.get("clientOrderIndex") or
+                output_dict.get("result", {}).get("ClientOrderIndex") or
+                output_dict.get("result", {}).get("clientOrderIndex") or
+                output_dict.get("id") or
+                "NODE_ORDER_ID"
+        )
+
+        if isinstance(raw_id, dict):
+            raw_id = raw_id.get("ClientOrderIndex") or raw_id.get("clientOrderIndex")
+
+        final_id = str(raw_id) if raw_id and not isinstance(raw_id, (dict, list)) else "NODE_ORDER_ID"
+
+        print(f"✅ [PATCH NODE] Ordem enviada com sucesso! ID: {final_id}")
+
+        return {
+            "id": final_id,
+            "price": price,
+            "amount": amount,
+            "side": side_str,
+            "status": "closed",
+            "info": output_data
+        }
 
     async def adjust_balance(self, capital_amount: float, dex_price: float, symbol: str) -> float:
         try:

@@ -10,3 +10,4 @@ base58
 pandas_ta
 pandas
 ta
+git+https://github.com/elliottech/lighter-python.git
