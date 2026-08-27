@@ -454,18 +454,13 @@ class ExchangeClient(ExchangeBase, ABC):
 
         try:
 
-            scale_factor = 100
-
-            scaled_base_amount = int(float(safe_order['base_amount']) * scale_factor)
-            scaled_price = int(float(safe_order['avg_execution_price']) * scale_factor)
-
             # Gerar a assinatura chamando o método nativo da SDK para criação de ordens
             # A SDK devolve diretamente o tipo de transação (tx_type) e as informações assinadas (tx_info)
             tx_type, tx_info, tx_hash, err = signer_client.sign_create_order(
                 market_index=int(safe_order['market_index']),
                 client_order_index=int(safe_order['client_order_index']),
-                base_amount=scaled_base_amount,
-                price=scaled_price,  # ou o preço correspondente enviado na ordem
+                base_amount=safe_order['base_amount'],
+                price=safe_order['avg_execution_price'],  # ou o preço correspondente enviado na ordem
                 is_ask=bool(safe_order['is_ask']),
                 order_type=int(safe_order['order_type']),
                 time_in_force=int(safe_order['time_in_force']),
@@ -517,11 +512,18 @@ class ExchangeClient(ExchangeBase, ABC):
             logging.info(f"🔢 [PATCH] Nonce obtido: {order['nonce']}")
 
         try:
+
+            market_precision = self.exchange.market(symbol)
+            base_scale = 10 ** market_precision['precision']['amount']
+
+            scaled_base_amount = int(float(order['base_amount']) * base_scale)
+            scaled_price = int(float(order['avg_execution_price']) * 100)
+
             safe_order = {
                 'market_index': int(order['market_index']),
                 'client_order_index': order['client_order_index'],
-                'base_amount': order['base_amount'],
-                'avg_execution_price': order['avg_execution_price'],
+                'base_amount': scaled_base_amount,
+                'avg_execution_price': scaled_price,
                 'is_ask': order['is_ask'],
                 'order_type': order['order_type'],
                 'time_in_force': order['time_in_force'],
@@ -534,12 +536,12 @@ class ExchangeClient(ExchangeBase, ABC):
                 'nonce': int(order['nonce']),
                 'api_key_index': int(apiKeyIndex),
                 'account_index': int(accountIndex),
+                'symbol': symbol,
             }
 
             logging.info("✍️ [PATCH] Assinando transação com a SDK oficial da Lighter...")
 
             # --- SUBSTITUIÇÃO DO CTYPES PELA SDK OFICIAL ---
-            # Substituímos a chamada antiga baseada em .so/ctypes pela função nativa da Lighter SDK
             tx_type, tx_info = await self.sign_create_order_with_sdk(
                 private_key=private_key,
                 account_index=int(accountIndex),
