@@ -253,10 +253,6 @@ class CexBot:
         qty = cex_opportunity.qtd_pair
         leverage = 1.0
 
-        if not await self.lighter_exchange.validate_lighter_client():
-            logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")
-            return False
-
         # Configuração de sinais
         if cex_opportunity.type == CexType.HL_TO_LIGHTER:
             hl_signal, lighter_signal = Signal.BUY, Signal.SELL
