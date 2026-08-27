@@ -547,11 +547,19 @@ class ExchangeClient(ExchangeBase, ABC):
 
         try:
 
-            market_precision = self.exchange.market(symbol)
-            base_scale = 10 ** market_precision['precision']['amount']
+            market = self.exchange.market(symbol)
+            market_info = market.get('info', {})
+
+            # Obter o número de casas decimais suportadas diretamente da Lighter
+            size_decimals = int(market_info.get('size_decimals', 2))  # Para o TRUMP é 2
+            price_decimals = int(market_info.get('price_decimals', 4))  # Para o TRUMP é 4
+
+            # O fator de escala para transformar o float em inteiro (ex: 2 casas decimais -> multiplicar por 10**2 = 100)
+            base_scale = 10 ** size_decimals
+            price_scale = 10 ** price_decimals  # Ou manter o * 100 se a Lighter exigir apenas 2 cêntimos, mas o price_decimals diz 4
 
             scaled_base_amount = int(float(order['base_amount']) * base_scale)
-            scaled_price = int(float(order['avg_execution_price']) * 100)
+            scaled_price = int(float(order['avg_execution_price']) * price_scale)
 
             safe_order = {
                 'market_index': int(order['market_index']),
