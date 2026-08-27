@@ -623,6 +623,34 @@ async function getPositionOrca(poolAddress) {
             }
         } catch (e) {}
 
+        if (initialUsd == 0) {
+            const lowerPriceRaw = Math.pow(1.0001, lowerTickIndex);
+            const upperPriceRaw = Math.pow(1.0001, upperTickIndex);
+            const centerPriceRaw = Math.sqrt(lowerPriceRaw * upperPriceRaw);
+            const centerPrice = centerPriceRaw * Math.pow(10, decimalsTokenA - decimalsTokenB);
+
+            const liquidity = Number(targetPosition.data.liquidity);
+            let initAmountA = 0;
+            let initAmountB = 0;
+
+            if (liquidity > 0) {
+                const sqrtCenter = Math.sqrt(centerPriceRaw);
+                const sqrtLower = Math.sqrt(lowerPriceRaw);
+                const sqrtUpper = Math.sqrt(upperPriceRaw);
+
+                initAmountA = liquidity * (sqrtUpper - sqrtCenter) / (sqrtCenter * sqrtUpper);
+                initAmountB = liquidity * (sqrtCenter - sqrtLower);
+            }
+
+            const initialTokenA = Math.max(0, initAmountA / Math.pow(10, decimalsTokenA));
+            const initialTokenB = Math.max(0, initAmountB / Math.pow(10, decimalsTokenB));
+
+            // CONGELAMENTO TOTAL: Usamos o centerPrice como câmbio fixo de fábrica,
+            // eliminando a dependência do tokenPriceA/B dinâmico da API de mercado neste cálculo específico.
+            const slippageBuffer = 0.0005; // 0.05%
+            initialUsd = ((initialTokenA * centerPrice) + initialTokenB) * (1 + slippageBuffer);
+        }
+
         // 1. Totais reais (Tokens principais + Taxas pendentes)
         const totalTokenA = finalAmountA + feeA;
         const totalTokenB = finalAmountB + feeB;
@@ -639,7 +667,6 @@ async function getPositionOrca(poolAddress) {
 
         const lowerPriceFinal = Math.pow(1.0001, lowerTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
         const upperPriceFinal = Math.pow(1.0001, upperTickIndex) * Math.pow(10, decimalsTokenA - decimalsTokenB);
-
 
         return {
             exists: true,
