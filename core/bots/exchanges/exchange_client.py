@@ -25,23 +25,14 @@ class ExchangeClient(ExchangeBase, ABC):
         # self._nonce_lock = asyncio.Lock()
         self._order_lock = asyncio.Lock()
 
-        self.realtime_exposure = {}
+        # self.realtime_exposure = {}
 
         self.account_index_lighter = 729593
         self.api_key_index_lighter = 254
 
-        # print("AQUIII", self.exchange.options.get('api_secret'))
         if "lighter" in str(self.exchange.id).lower():
-            # print("AQUIII", self.exchange.options.get('accountIndex'))
-            # print("AQUIII", self.exchange.options.get('apiKeyIndex'))
-            # Configurações estritas globais exigidas pela Lighter
-            # self.exchange.options['accountIndex'] = self.account_index_lighter
-            # self.exchange.options['apiKeyIndex'] = self.api_key_index_lighter
             self.exchange.options['builderFee'] = False
             self.exchange.options['approvedBuilderFee'] = True
-
-            # 🎯 A MÁGICA: Substituímos o método do CCXT permanentemente aqui no init!
-            # A partir deste momento, sempre que o CCXT precisar de um nonce, ele chama a nossa função robusta
             self.exchange.fetch_nonce = self._custom_fetch_nonce_lighter
             self.exchange.create_order = self.create_order_patched
 
@@ -203,9 +194,9 @@ class ExchangeClient(ExchangeBase, ABC):
                 if pos["symbol"] == symbol and float(pos.get('contracts', 0)) > 0:  # type: ignore
 
                     size = float(pos['contracts'])  # type: ignore
-                    entry_price = pos.get('entryPrice') or pos.get('entry_price') or pos.get('averagePrice') or 0.0
+                    entry_price = pos.get('entryPrice') or 0.0
                     _id = pos.get('id') or pos.get('info', {}).get('order', {}).get('oid')
-                    unrealized_pnl = pos.get('unrealizedPnl') or pos.get('unrealizedPnl')
+                    unrealized_pnl = pos.get('unrealizedPnl')
                     funding_rate = await self.exchange.fetch_funding_rate(symbol)
 
                     signal = 'hold'
@@ -259,43 +250,33 @@ class ExchangeClient(ExchangeBase, ABC):
 
     async def place_entry_order(self, symbol: str, leverage: float, entry_amount: float, price_ref: float,
                                 side: Signal) -> OpenedOrder:
-        logging.info(
-            f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}")
         try:
-
             params: dict[str, Any] = {}
 
             await self.exchange.set_margin_mode("isolated", symbol, {'leverage': leverage})
 
-            logging.info(
-                f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}")
-
-            logging.info(f"Enviando ordem market ({side})")
-
+            # 1. Aplicar a precisão do CCXT ANTES de qualquer log ou cálculo
             entry_amount = float(self.exchange.amount_to_precision(symbol, entry_amount))
             precise_price = float(self.exchange.price_to_precision(symbol, price_ref))
 
-            logging.info(
-                f"🧾 Params finais para create_order: symbol={symbol}, type=market, side={side}, amount={entry_amount}, price={price_ref}, params=")
-
-            logging.info(f"Enviando ordem market ({side}) com params: ")
-
-            params['slippage'] = 0.01
-            if "lighter" in str(self.exchange.id).lower():
-                params['integrator_account_index'] = 0
-                params['integrator_taker_fee'] = 0  # ✨ A chave que faltava aqui!
-                params['integrator_maker_fee'] = 0  # Prevenção: Próxima provável chave
-                params[
-                    'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
-
             slippage_factor = 0.015
-
             if side == Signal.BUY:
                 execution_price = price_ref * (1 + slippage_factor)
             else:
                 execution_price = price_ref * (1 - slippage_factor)
 
             execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
+
+            logging.info(
+                f"🧾 Params finais para create_order: symbol={symbol}, type=limit, side={side}, amount={entry_amount}, price={execution_price}")
+
+            """
+            if "lighter" in str(self.exchange.id).lower():
+                params['integrator_account_index'] = 0
+                params['integrator_taker_fee'] = 0
+                params['integrator_maker_fee'] = 0
+                params['integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"
+            """
 
             order = await self.exchange.create_order(
                 symbol=symbol,
@@ -305,15 +286,16 @@ class ExchangeClient(ExchangeBase, ABC):
                 price=execution_price,
                 params=params
             )
-            raw_price = order.get('price')  # type: ignore
-            final_price = float(raw_price) if (
-                    raw_price is not None and str(raw_price).strip() != '') else price_ref
+
+            raw_price = order.get('price')
+            final_price = float(raw_price) if (raw_price is not None and str(raw_price).strip() != '') else price_ref
+
             logging.info(
-                f"✅ Ordem criada: id={order.get('id')}, side={order.get('side')}, amount={order.get('amount')}, price={order.get('price')}")  # type: ignore
+                f"✅ Ordem criada: id={order.get('id')}, side={order.get('side')}, amount={order.get('amount')}, price={order.get('price')}")
 
             return OpenedOrder(str(order.get('id') or ""), None, None, None, symbol, None,
                                str(order.get('side') or ""),
-                               final_price, order.get('amount'), False, None)  # type: ignore
+                               final_price, order.get('amount'), False, None)
 
         except Exception as e:
             logging.error(f"Erro ao criar ordem de entrada: {e}")
@@ -453,53 +435,13 @@ class ExchangeClient(ExchangeBase, ABC):
 
             return self._lighter_nonce
 
-    async def validate_lighter_client(self):
-        if "lighter" not in str(self.exchange.id).lower():
-            return True
-
-        try:
-            await self.exchange.load_markets()
-
-            # 1. O que definimos nas options
-            opt_acc = str(self.exchange.options.get('accountIndex', ''))
-            opt_api = str(self.exchange.options.get('apiKeyIndex', ''))
-
-            # 2. O que o CCXT vai usar (o que vem do handle)
-            handle_acc = getattr(self.exchange, 'handle_account_index', None)
-            handle_api = getattr(self.exchange, 'handle_api_key_index', None)
-            real_acc = None
-            real_api = None
-            if handle_acc:
-                raw_acc = await handle_acc({}, 'createOrder', 'accountIndex', 'account_index')
-                data_to_filter = str(raw_acc) if raw_acc is not None else ""
-                real_acc = "".join(filter(lambda x: x.isdigit(), data_to_filter))
-
-            if handle_api:
-                raw_api = handle_api({}, 'loadAccount', 'apiKeyIndex', 'api_key_index')
-                data_to_filter = str(raw_api) if raw_api is not None else ""
-                real_api = "".join(filter(lambda x: x.isdigit(), data_to_filter))
-
-            # 3. Comparação de integridade
-            if opt_acc != real_acc or opt_api != real_api:
-                logging.error(
-                    f"❌ MISMATCH DE CONFIGURAÇÃO! Options: Acc={opt_acc}/API={opt_api} vs CCXT: Acc={real_acc}/API={real_api}")
-                return False
-
-            if not real_acc or not real_api:
-                logging.error("❌ Índices vazios detectados!")
-                return False
-
-            logging.info(f"✅ Integridade validada: Acc={real_acc}, API={real_api}")
-            return True
-        except Exception as e:
-            logging.error(f"❌ Erro na validação: {e}")
-            return False
-
-    def sign_create_order_with_sdk(self, private_key: str, account_index: int, api_key_index: int, safe_order: dict):
+    async def sign_create_order_with_sdk(self, private_key: str, account_index: int, api_key_index: int,
+                                         safe_order: dict):
         """
         Gera a assinatura criptográfica utilizando a SDK oficial da Lighter em Python puro,
         evitando a dependência de ficheiros .so/.dylib via ctypes.
         """
+
         # Determinar o URL base do endpoint (ex: testnet ou mainnet conforme a tua config)
         base_url = getattr(self.exchange, 'options', {}).get('url', 'https://mainnet.zklighter.elliot.ai')
 
@@ -510,24 +452,36 @@ class ExchangeClient(ExchangeBase, ABC):
             account_index=int(account_index)
         )
 
-        # Gerar a assinatura chamando o método nativo da SDK para criação de ordens
-        # A SDK devolve diretamente o tipo de transação (tx_type) e as informações assinadas (tx_info)
-        tx_type, tx_info, tx_hash, err = signer_client.sign_create_order(
-            market_index=int(safe_order['market_index']),
-            client_order_index=int(safe_order['client_order_index']),
-            base_amount=int(safe_order['base_amount']),
-            price=int(safe_order['avg_execution_price']),  # ou o preço correspondente enviado na ordem
-            is_ask=bool(safe_order['is_ask']),
-            order_type=int(safe_order['order_type']),
-            time_in_force=int(safe_order['time_in_force']),
-            reduce_only=bool(safe_order['reduce_only']),
-            trigger_price=int(safe_order.get('trigger_price', 0)),
-            order_expiry=int(safe_order['order_expiry']),
-            nonce=int(safe_order['nonce']),
-            api_key_index=int(api_key_index)
-        )
+        try:
 
-        return tx_type, tx_info
+            scale_factor = 100
+
+            scaled_base_amount = int(float(safe_order['base_amount']) * scale_factor)
+            scaled_price = int(float(safe_order['avg_execution_price']) * scale_factor)
+
+            # Gerar a assinatura chamando o método nativo da SDK para criação de ordens
+            # A SDK devolve diretamente o tipo de transação (tx_type) e as informações assinadas (tx_info)
+            tx_type, tx_info, tx_hash, err = signer_client.sign_create_order(
+                market_index=int(safe_order['market_index']),
+                client_order_index=int(safe_order['client_order_index']),
+                base_amount=scaled_base_amount,
+                price=scaled_price,  # ou o preço correspondente enviado na ordem
+                is_ask=bool(safe_order['is_ask']),
+                order_type=int(safe_order['order_type']),
+                time_in_force=int(safe_order['time_in_force']),
+                reduce_only=bool(safe_order['reduce_only']),
+                trigger_price=int(safe_order.get('trigger_price', 0)),
+                order_expiry=int(safe_order['order_expiry']),
+                nonce=int(safe_order['nonce']),
+                api_key_index=int(api_key_index)
+            )
+
+            if err is not None:
+                raise Exception(err)
+
+            return tx_type, tx_info
+        finally:
+            await signer_client.close()
 
     async def create_order_patched(self, symbol: str, type: OrderType, side: OrderSide, amount: float,
                                    price: Num = None, params={}):
@@ -586,7 +540,7 @@ class ExchangeClient(ExchangeBase, ABC):
 
             # --- SUBSTITUIÇÃO DO CTYPES PELA SDK OFICIAL ---
             # Substituímos a chamada antiga baseada em .so/ctypes pela função nativa da Lighter SDK
-            tx_type, tx_info = self.sign_create_order_with_sdk(
+            tx_type, tx_info = await self.sign_create_order_with_sdk(
                 private_key=private_key,
                 account_index=int(accountIndex),
                 api_key_index=int(apiKeyIndex),
@@ -607,7 +561,7 @@ class ExchangeClient(ExchangeBase, ABC):
 
         combined_data = self.exchange.deep_extend(response, order)
         parsed_order = self.exchange.parse_order(combined_data, market)
-        
+
         if response.get('tx_hash'):
             parsed_order['id'] = response.get('tx_hash')
         return parsed_order
