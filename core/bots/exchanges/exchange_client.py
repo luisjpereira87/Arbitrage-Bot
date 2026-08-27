@@ -22,10 +22,7 @@ class ExchangeClient(ExchangeBase, ABC):
         self.wallet_address = wallet_address
 
         self._lighter_nonce = None
-        # self._nonce_lock = asyncio.Lock()
         self._order_lock = asyncio.Lock()
-
-        # self.realtime_exposure = {}
 
         self.account_index_lighter = 729593
         self.api_key_index_lighter = 254
@@ -194,9 +191,9 @@ class ExchangeClient(ExchangeBase, ABC):
                 if pos["symbol"] == symbol and float(pos.get('contracts', 0)) > 0:  # type: ignore
 
                     size = float(pos['contracts'])  # type: ignore
-                    entry_price = pos.get('entryPrice') or 0.0
+                    entry_price = pos.get('entryPrice') or pos.get('entry_price') or pos.get('averagePrice') or 0.0
                     _id = pos.get('id') or pos.get('info', {}).get('order', {}).get('oid')
-                    unrealized_pnl = pos.get('unrealizedPnl')
+                    unrealized_pnl = pos.get('unrealizedPnl') or pos.get('unrealizedPnl')
                     funding_rate = await self.exchange.fetch_funding_rate(symbol)
 
                     signal = 'hold'
@@ -435,24 +432,64 @@ class ExchangeClient(ExchangeBase, ABC):
 
             return self._lighter_nonce
 
+    async def validate_lighter_client(self):
+        if "lighter" not in str(self.exchange.id).lower():
+            return True
+
+        try:
+            await self.exchange.load_markets()
+
+            # 1. O que definimos nas options
+            opt_acc = str(self.exchange.options.get('accountIndex', ''))
+            opt_api = str(self.exchange.options.get('apiKeyIndex', ''))
+
+            # 2. O que o CCXT vai usar (o que vem do handle)
+            handle_acc = getattr(self.exchange, 'handle_account_index', None)
+            handle_api = getattr(self.exchange, 'handle_api_key_index', None)
+            real_acc = None
+            real_api = None
+            if handle_acc:
+                raw_acc = await handle_acc({}, 'createOrder', 'accountIndex', 'account_index')
+                data_to_filter = str(raw_acc) if raw_acc is not None else ""
+                real_acc = "".join(filter(lambda x: x.isdigit(), data_to_filter))
+
+            if handle_api:
+                raw_api = handle_api({}, 'loadAccount', 'apiKeyIndex', 'api_key_index')
+                data_to_filter = str(raw_api) if raw_api is not None else ""
+                real_api = "".join(filter(lambda x: x.isdigit(), data_to_filter))
+
+            # 3. Comparação de integridade
+            if opt_acc != real_acc or opt_api != real_api:
+                logging.error(
+                    f"❌ MISMATCH DE CONFIGURAÇÃO! Options: Acc={opt_acc}/API={opt_api} vs CCXT: Acc={real_acc}/API={real_api}")
+                return False
+
+            if not real_acc or not real_api:
+                logging.error("❌ Índices vazios detectados!")
+                return False
+
+            logging.info(f"✅ Integridade validada: Acc={real_acc}, API={real_api}")
+            return True
+        except Exception as e:
+            logging.error(f"❌ Erro na validação: {e}")
+            return False
+
     async def sign_create_order_with_sdk(self, private_key: str, account_index: int, api_key_index: int,
                                          safe_order: dict):
         """
         Gera a assinatura criptográfica utilizando a SDK oficial da Lighter em Python puro,
         evitando a dependência de ficheiros .so/.dylib via ctypes.
         """
-
-        # Determinar o URL base do endpoint (ex: testnet ou mainnet conforme a tua config)
-        base_url = getattr(self.exchange, 'options', {}).get('url', 'https://mainnet.zklighter.elliot.ai')
-
-        # Inicializar o SignerClient oficial da Lighter
-        signer_client = lighter.SignerClient(
-            url=base_url,
-            api_private_keys={int(api_key_index): private_key},
-            account_index=int(account_index)
-        )
-
         try:
+            # Determinar o URL base do endpoint (ex: testnet ou mainnet conforme a tua config)
+            base_url = getattr(self.exchange, 'options', {}).get('url', 'https://mainnet.zklighter.elliot.ai')
+
+            # Inicializar o SignerClient oficial da Lighter
+            signer_client = lighter.SignerClient(
+                url=base_url,
+                api_private_keys={int(api_key_index): private_key},
+                account_index=int(account_index)
+            )
 
             # Gerar a assinatura chamando o método nativo da SDK para criação de ordens
             # A SDK devolve diretamente o tipo de transação (tx_type) e as informações assinadas (tx_info)
@@ -470,13 +507,10 @@ class ExchangeClient(ExchangeBase, ABC):
                 nonce=int(safe_order['nonce']),
                 api_key_index=int(api_key_index)
             )
-
-            if err is not None:
-                raise Exception(err)
-
-            return tx_type, tx_info
+            await signer_client.close()
         finally:
             await signer_client.close()
+        return tx_type, tx_info
 
     async def create_order_patched(self, symbol: str, type: OrderType, side: OrderSide, amount: float,
                                    price: Num = None, params={}):
