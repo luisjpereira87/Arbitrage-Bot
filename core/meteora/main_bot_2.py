@@ -124,7 +124,7 @@ class DeltaNeutralSniperAggressiveBot:
 
         return False, current_peak
 
-    async def evaluate_market_condition(self, action: MarketAction) -> bool:
+    async def evaluate_market_condition__(self, action: MarketAction) -> bool:
         """
         Motor central de decisão. Avalia o RSI, a EMA do RSI, turbulência
         e devolve True se a ação for permitida, ou False caso contrário.
@@ -183,7 +183,59 @@ class DeltaNeutralSniperAggressiveBot:
 
         return True
 
-    async def can_open_short_hedge(self) -> bool:
+    async def evaluate_market_condition(self, action: MarketAction) -> bool:
+        """
+        Motor central de decisão. Avalia o Super Score, turbulência
+        e devolve True se a ação for permitida, ou False caso contrário.
+        """
+        TURBULENCE_THRESHOLD = 0.005
+
+        # 1. Verificação global de turbulência (mantém-se igual)
+        is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=TURBULENCE_THRESHOLD)
+        if is_turbulent:
+            if action in [MarketAction.OPEN_LONG, MarketAction.CONTINUE_LONG] and direction == DirectionMarket.DOWN:
+                return False
+            if action in [MarketAction.OPEN_SHORT, MarketAction.CONTINUE_SHORT] and direction == DirectionMarket.UP:
+                return False
+
+        # 2. Obter o contexto técnico do Super Score
+        _, _, is_bullish, is_bearish = await self.hl_client.get_super_score()
+
+        # 3. Avaliação específica por cada intenção de trading
+
+        # --- ABRIR LONG ---
+        if action == MarketAction.OPEN_LONG:
+            # Só abre Long se o Super Score estiver em dinâmica estritamente bullish
+            if not is_bullish:
+                return False
+            return True
+
+        # --- ABRIR SHORT ---
+        if action == MarketAction.OPEN_SHORT:
+            # Só abre Short se o Super Score estiver em dinâmica estritamente bearish
+            if not is_bearish:
+                return False
+            return True
+
+        # --- CONTINUAR COM O LONG ---
+        if action == MarketAction.CONTINUE_LONG:
+            # Queremos fechar/cortar o Long se o mercado virar repentinamente para bearish
+            if is_bearish:
+                logging.info("🛑 [Sinal de Saída Long] Super Score virou bearish. Sugere fechar Long.")
+                return False
+            return True
+
+        # --- CONTINUAR COM O SHORT ---
+        if action == MarketAction.CONTINUE_SHORT:
+            # Queremos fechar/cortar o Short se o mercado virar repentinamente para bullish
+            if is_bullish:
+                logging.info("🛑 [Sinal de Saída Short] Super Score virou bullish. Sugere fechar Short.")
+                return False
+            return True
+
+        return True
+
+    async def can_open_short_hedge__(self) -> bool:
         """
         Avalia se é seguro abrir o Short defensivo na HL,
         filtrando a armadilha do RSI a recuar aos 50 (falsa consolidação pós-rally).
@@ -212,6 +264,25 @@ class DeltaNeutralSniperAggressiveBot:
                     f"🛑 [Short Rejeitado] RSI na zona dos 50 ({current_rsi:.1f}) com momentum de cooling. Risco de falso descanso e novo pump!")
                 """
                 return False
+
+        return True
+
+    async def can_open_short_hedge(self) -> bool:
+        """
+        Avalia se é seguro abrir o Short defensivo,
+        filtrando falsos recuos com base na dinâmica do Super Score.
+        """
+        final_scores, smooth_scores, is_bullish, is_bearish = await self.hl_client.get_super_score()
+
+        # 1. Se o Super Score estiver fortemente bullish, nunca abrir short de proteção
+        if is_bullish:
+            return False
+
+        # 2. Avaliação de falso recuo (equivalente à zona neutra de indecisão)
+        # Se o score estiver próximo da linha suave mas o contexto geral não for bearish, evita-se a entrada
+        if final_scores[-1] >= smooth_scores[-1] and not is_bearish:
+            # logging.info("🛑 [Short Rejeitado] Super Score ainda em zona de sustentação compradora.")
+            return False
 
         return True
 
@@ -645,4 +716,4 @@ if __name__ == "__main__":
     asyncio.run(bot.start_sniper_cycle())
 
     # asyncio.run(bot.meteora_client.open_position(24.0, 867.88697, 0.04))
-    # asyncio.run(bot.hl_client.calculate_dynamic_range_width(limit=100, lookback=96, buffer=0))
+    # asyncio.run(bot.hl_client.get_super_score(14))

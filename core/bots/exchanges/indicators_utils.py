@@ -1,8 +1,11 @@
 import enum
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
-from ta.momentum import RSIIndicator
+from numpy import ndarray
+from ta.momentum import RSIIndicator, StochasticOscillator
+from ta.trend import MACD, ADXIndicator, PSARIndicator
 from ta.volatility import AverageTrueRange
 
 
@@ -159,3 +162,126 @@ class IndicatorsUtils():
             rsi_crossed_ema_down=rsi_crossed_ema_down,
             position_to_ema=position_to_ema
         )
+
+    @staticmethod
+    def ema_list(data, period) -> np.ndarray:
+        """
+        Calcula a Média Móvel Exponencial (EMA) sobre qualquer array de dados.
+        Fórmula: EMA = (Preço - EMA_anterior) * Multiplicador + EMA_anterior
+        """
+        data = np.array(data)
+        n = len(data)
+        ema = np.full(n, np.nan)  # Começamos tudo com nan em vez de 0
+
+        # Encontrar o primeiro índice que não é nan e não é zero
+        start_idx = 0
+        for i in range(n):
+            if not np.isnan(data[i]) and data[i] != 0:
+                start_idx = i
+                break
+
+        if start_idx >= n:
+            return ema
+
+        alpha = 2 / (period + 1)
+
+        # O primeiro valor válido da EMA é o primeiro valor real do dado
+        ema[start_idx] = data[start_idx]
+
+        # Cálculo iterativo a partir do ponto de dados real
+        for i in range(start_idx + 1, n):
+            # Se o dado atual for nan, mantemos o anterior
+            if np.isnan(data[i]):
+                ema[i] = ema[i - 1]
+            else:
+                ema[i] = (data[i] - ema[i - 1]) * alpha + ema[i - 1]
+
+        return ema
+
+    @staticmethod
+    def calculate_super_score(ohlcv: pd.DataFrame, smooth_period=5) -> tuple[
+        ndarray, ndarray]:
+        # --- 1. RSI ---
+        rsi14 = RSIIndicator(close=ohlcv["close"], window=14).rsi()
+        rsi8 = RSIIndicator(close=ohlcv["close"], window=8).rsi()
+
+        # --- 2. MACD ---
+        # O MACD da biblioteca 'ta' devolve a linha MACD, a linha de sinal e o histograma separadamente
+        macd_indicator = MACD(close=ohlcv["close"], window_slow=26, window_fast=12, window_sign=9)
+        macd = macd_indicator.macd()
+        macd_signal = macd_indicator.macd_signal()
+        macd_hist = macd_indicator.macd_diff()  # Equivalente ao histograma
+
+        # --- 3. STOCHASTIC ---
+        stoch = StochasticOscillator(high=ohlcv['high'], low=ohlcv['low'], close=ohlcv["close"], window=14,
+                                     smooth_window=3)
+        stoch_k = stoch.stoch()
+        stoch_d = stoch.stoch_signal()
+
+        # --- 4. ADX ---
+        adx_indicator = ADXIndicator(high=ohlcv['high'], low=ohlcv['low'], close=ohlcv["close"], window=14)
+        adx = adx_indicator.adx()
+
+        # --- 5. PARABOLIC SAR ---
+        # O PSAR na biblioteca 'ta' tem parâmetros padrão de passo 0.02 e máximo 0.2
+        psar_indicator = PSARIndicator(high=ohlcv['high'], low=ohlcv['low'], close=ohlcv["close"], step=0.02,
+                                       max_step=0.2)
+        psar = psar_indicator.psar()  # Atenção: na biblioteca 'ta', o método chama-se .psar() ou .psar_down()/.psar_up() dependendo da versão, mas o .psar() geral dá a série completa.
+
+        n = len(ohlcv["close"])
+        final_scores = np.zeros(n)
+
+        # Definimos os pesos máximos para podermos normalizar depois
+        # Peso total = 15+15 (RSIs) + 20+20 (MACD) + 30 (Stoch) = 100
+        for i in range(1, n):
+            raw_score = 0
+
+            # --- RSI CONFLUENCE (30 pts) ---
+            if rsi14[i] > 50:
+                raw_score += 10
+            elif rsi14[i] < 50:
+                raw_score -= 10
+
+            if rsi8[i] > 50:
+                raw_score += 10
+            elif rsi8[i] < 50:
+                raw_score -= 10
+
+            # --- MACD CONFLUENCE (40 pts) ---
+            if macd[i] > macd_signal[i]:
+                raw_score += 15
+            elif macd[i] < macd_signal[i]:
+                raw_score -= 15
+
+            if macd_hist[i] > 0:
+                raw_score += 15
+            elif macd_hist[i] < 0:
+                raw_score -= 15
+
+            # --- STOCHASTIC (30 pts) ---
+            if stoch_k[i] > stoch_d[i]:
+                raw_score += 25
+            elif stoch_k[i] < stoch_d[i]:
+                raw_score -= 25
+
+            # --- NOVO: PARABOLIC SAR (Peso: 25 pts) ---
+            # Se o PSAR está ABAIXO do preço (Tendência de Alta)
+            if psar[i] < ohlcv["close"].iloc[i]:
+                raw_score += 25
+            # Se o PSAR está ACIMA do preço (Tendência de Baixa)
+            else:
+                raw_score -= 25
+
+            # --- FILTRO DE ADX (A "SAÚDE" DO SINAL) ---
+            # Se o ADX for baixo (<20), o sinal é fraco por falta de tendência.
+            # Reduzimos o score em 50% para evitar entradas em "choppy market"
+            if adx[i] < 20:
+                raw_score *= 0.8
+
+            # Como o nosso raw_score máximo possível é 100 (15+15+20+20+30),
+            # ele já está na escala de -100 a 100.
+            final_scores[i] = raw_score
+
+        smooth_scores = IndicatorsUtils.ema_list(final_scores, smooth_period)
+
+        return final_scores, smooth_scores

@@ -3,6 +3,7 @@ import enum
 import logging
 
 import ccxt.pro as ccxtpro
+from numpy import ndarray
 
 from core.bots.exchanges.exchange_client import ExchangeClient
 from core.bots.exchanges.indicators_utils import IndicatorsUtils, RsiResponse
@@ -238,3 +239,28 @@ class HlClient:
     async def check_rsi_condition(self, period=14) -> RsiResponse:
         ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=period + 100)
         return IndicatorsUtils.check_rsi_condition(ohlcv, period)
+
+    async def get_super_score(self, period=14) -> tuple[ndarray, ndarray, bool, bool]:
+        ohlcv = await self.hl_exchange.get_ohlcv(self.symbol, limit=period + 100)
+        final_scores, smooth_scores = IndicatorsUtils.calculate_super_score(ohlcv, 5)
+
+        extreme_threshold = 50.0
+
+        # Condições de Alta (Bullish) - Bloqueia se o score já estiver acima de 50 (exaustão de topo)
+        is_bullish = (
+                final_scores[-1] > smooth_scores[-1] and
+                final_scores[-1] > 0 and
+                final_scores[-1] > final_scores[-2] and
+                final_scores[-1] < extreme_threshold
+        )
+
+        # Condições de Baixa (Bearish) - Bloqueia se o score já estiver abaixo de -50 (exaustão de fundo)
+        is_bearish = (
+                final_scores[-1] < smooth_scores[-1] and
+                final_scores[-1] < final_scores[-2] and
+                final_scores[-1] > -extreme_threshold
+        )
+
+        print(final_scores, smooth_scores, is_bullish, is_bearish)
+
+        return final_scores, smooth_scores, is_bullish, is_bearish
