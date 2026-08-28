@@ -273,19 +273,9 @@ class DeltaNeutralSniperAggressiveBot:
         Avalia se é seguro abrir o Short defensivo,
         filtrando falsos recuos com base na dinâmica do Super Score.
         """
-        final_scores, smooth_scores, is_bullish, is_bearish = await self.hl_client.get_super_score()
+        _, _, _, is_bearish = await self.hl_client.get_super_score()
 
-        # 1. Se o Super Score estiver fortemente bullish, nunca abrir short de proteção
-        if is_bullish:
-            return False
-
-        # 2. Avaliação de falso recuo (equivalente à zona neutra de indecisão)
-        # Se o score estiver próximo da linha suave mas o contexto geral não for bearish, evita-se a entrada
-        if final_scores[-1] >= smooth_scores[-1] and not is_bearish:
-            # logging.info("🛑 [Short Rejeitado] Super Score ainda em zona de sustentação compradora.")
-            return False
-
-        return True
+        return is_bearish
 
     async def calculate_open_balance(self, price_token: float) -> tuple[float, float]:
         capital_para_hedge = self.total_usdc_capital / 2
