@@ -261,6 +261,4 @@ class HlClient:
                 final_scores[-1] > -extreme_threshold
         )
 
-        print(final_scores, smooth_scores, is_bullish, is_bearish)
-
         return final_scores, smooth_scores, is_bullish, is_bearish
