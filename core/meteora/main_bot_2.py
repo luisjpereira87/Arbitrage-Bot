@@ -66,7 +66,8 @@ class DeltaNeutralSniperAggressiveBot:
 
         self.lookback_range = 96
         self.lookback_limit = 100
-        self.range_margin_pct = 0.15
+        # self.range_margin_pct = 0.15
+        self.range_margin_pct = 0.0
 
         slippage_buffer = 0.0002
         fee_rate = 0.00025 + slippage_buffer
