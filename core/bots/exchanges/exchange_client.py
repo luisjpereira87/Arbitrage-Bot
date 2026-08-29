@@ -267,13 +267,11 @@ class ExchangeClient(ExchangeBase, ABC):
             logging.info(
                 f"🧾 Params finais para create_order: symbol={symbol}, type=limit, side={side}, amount={entry_amount}, price={execution_price}")
 
-            """
             if "lighter" in str(self.exchange.id).lower():
                 params['integrator_account_index'] = 0
                 params['integrator_taker_fee'] = 0
                 params['integrator_maker_fee'] = 0
                 params['integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"
-            """
 
             order = await self.exchange.create_order(
                 symbol=symbol,
