@@ -524,6 +524,12 @@ class ExchangeClient(ExchangeBase, ABC):
         orderRequests = self.exchange.create_order_request(symbol, type, side, amount, price, params)
 
         order = orderRequests[0]
+
+        logging.info(f"🔍 [DEBUG CCXT ORDER] raw base_amount: {order.get('base_amount')}")
+        logging.info(f"🔍 [DEBUG CCXT ORDER] raw price: {order.get('avg_execution_price')}")
+        logging.info(f"🔍 [DEBUG CCXT ORDER] market_index: {order.get('market_index')}")
+        logging.info(f"🔍 [DEBUG CCXT ORDER] is_ask: {order.get('is_ask')}")
+
         apiKeyIndex = order['api_key_index']
 
         # 2. Diagnóstico de Identidade
@@ -545,25 +551,14 @@ class ExchangeClient(ExchangeBase, ABC):
 
         try:
 
-            market = self.exchange.market(symbol)
-            market_info = market.get('info', {})
-
-            # Obter o número de casas decimais suportadas diretamente da Lighter
-            size_decimals = int(market_info.get('size_decimals', 2))  # Para o TRUMP é 2
-            price_decimals = int(market_info.get('price_decimals', 4))  # Para o TRUMP é 4
-
-            # O fator de escala para transformar o float em inteiro (ex: 2 casas decimais -> multiplicar por 10**2 = 100)
-            base_scale = 10 ** size_decimals
-            price_scale = 10 ** price_decimals  # Ou manter o * 100 se a Lighter exigir apenas 2 cêntimos, mas o price_decimals diz 4
-
-            scaled_base_amount = int(float(order['base_amount']) * base_scale)
-            scaled_price = int(float(order['avg_execution_price']) * price_scale)
+            # market = self.exchange.market(symbol)
+            # market_info = market.get('info', {})
 
             safe_order = {
                 'market_index': int(order['market_index']),
                 'client_order_index': order['client_order_index'],
-                'base_amount': scaled_base_amount,
-                'avg_execution_price': scaled_price,
+                'base_amount': order['base_amount'],
+                'avg_execution_price': order['avg_execution_price'],
                 'is_ask': order['is_ask'],
                 'order_type': order['order_type'],
                 'time_in_force': order['time_in_force'],

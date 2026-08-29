@@ -98,7 +98,7 @@ class CexBot:
         self.last_balance_update = 0.0
         self.BALANCE_UPDATE_INTERVAL = 120.0  # Segundos
 
-        self.min_capital = 11.0
+        self.min_capital = 15.0
 
     def calculate_spread(
             self,
@@ -650,10 +650,10 @@ class CexBot:
             # 3. Executa a ordem de venda pequena
             # Ajusta o symbol e amount para algo seguro
             order = await self.lighter_exchange.open_new_position(
-                "BTC/USDC:USDC",
+                "ZEC/USDC:USDC",
                 1.0,
                 Signal.SELL,
-                20.0  # Preço muito alto para a ordem não ser executada imediatamente
+                15.0  # Preço muito alto para a ordem não ser executada imediatamente
             )
             print(f"✅ Ordem enviada com sucesso! ID: {order.id}")
 
