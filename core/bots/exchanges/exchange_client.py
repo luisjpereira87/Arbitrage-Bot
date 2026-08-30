@@ -346,6 +346,7 @@ class ExchangeClient(ExchangeBase, ABC):
 
             params: dict[str, Any] = {}
             params['reduceOnly'] = True
+            execution_price = price
             if "lighter" in str(self.exchange.id).lower():
                 params['integrator_account_index'] = 0
                 params['integrator_taker_fee'] = 0  # ✨ A chave que faltava aqui!
@@ -353,19 +354,19 @@ class ExchangeClient(ExchangeBase, ABC):
                 params[
                     'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
 
-            slippage_factor = 0.03
+                slippage_factor = 0.03
 
-            # 3. Inverter o lado para o fecho e calcular o preço de proteção
-            if side == Signal.BUY:
-                # A posição original era COMPRA -> Temos de VENDER para fechar.
-                # Aceitamos vender até 1.5% ABAIXO do Bid atual para limpar o livro.
-                execution_price = price * (1 - slippage_factor)
-            else:
-                # A posição original era VENDA -> Temos de COMPRAR para fechar.
-                # Aceitamos comprar até 1.5% ACIMA do Ask atual para limpar o livro.
-                execution_price = price * (1 + slippage_factor)
+                # 3. Inverter o lado para o fecho e calcular o preço de proteção
+                if side == Signal.BUY:
+                    # A posição original era COMPRA -> Temos de VENDER para fechar.
+                    # Aceitamos vender até 1.5% ABAIXO do Bid atual para limpar o livro.
+                    execution_price = price * (1 - slippage_factor)
+                else:
+                    # A posição original era VENDA -> Temos de COMPRAR para fechar.
+                    # Aceitamos comprar até 1.5% ACIMA do Ask atual para limpar o livro.
+                    execution_price = price * (1 + slippage_factor)
 
-            execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
+                execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
             amount = float(self.exchange.amount_to_precision(symbol, amount))
 
             # Não enviar preço em ordens market (exchange pode rejeitar)
