@@ -300,13 +300,13 @@ class ExchangeClient(ExchangeBase, ABC):
                                 price_ref: (float | None) = None) -> (
             OpenedOrder | None):
 
-        if price_ref is None:
-            prices = await self.get_entry_price(symbol)
+        # if price_ref is None:
+        prices = await self.get_entry_price(symbol)
 
-            if prices is None or prices <= 0:
-                raise ValueError("❌ Invalid reference price (None or <= 0)")
+        if prices is None or prices <= 0:
+            raise ValueError("❌ Invalid reference price (None or <= 0)")
 
-            price_ref = prices
+        price_ref = prices
 
         entry_amount = self.calculate_entry_amount(price_ref, capital_amount)
         side = signal
@@ -324,7 +324,35 @@ class ExchangeClient(ExchangeBase, ABC):
         """
         return await self.place_entry_order(symbol, leverage, entry_amount, price_ref, side)
 
-    async def close_position(self, symbol: str, amount: float, side: Signal):
+    async def close_position(self, symbol: str, amount: float, side: Signal) -> OpenedOrder:
+        """
+        Fecha a posição enviando uma ordem limite agressiva no sentido oposto,
+        utilizando a mesma lógica fiável de place_entry_order.
+        """
+        try:
+            logging.info(f"[DEBUG] Tentando fechar posição: symbol={symbol}, side={side.value}, amount={amount}")
+
+            # 1. Obter o preço de referência atual para o fecho
+            prices = await self.get_entry_price(symbol)
+            if prices is None or prices <= 0:
+                raise ValueError("❌ Invalid reference price for closing (None or <= 0)")
+
+            # 2. Chamar o place_entry_order diretamente com o sinal oposto para garantir o fecho exato
+            # Se o argumento 'side' representa a direção para fechar (ex: Signal.BUY para fechar uma venda),
+            # basta passá-lo diretamente à função de entrada.
+            return await self.place_entry_order(
+                symbol=symbol,
+                leverage=1.0,  # Ou a alavancagem atual da posição
+                entry_amount=amount,
+                price_ref=prices,
+                side=side
+            )
+
+        except Exception as e:
+            logging.error(f"❌ Erro ao fechar posição: {e}")
+            raise
+
+    async def close_position__(self, symbol: str, amount: float, side: Signal):
         """
         Fecha posição com ordem de mercado. Usa 'side' atual para calcular o lado oposto (close_side).
         """
@@ -354,17 +382,17 @@ class ExchangeClient(ExchangeBase, ABC):
                 params[
                     'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
 
-                slippage_factor = 0.03
+                slippage_factor = 0.015
 
                 # 3. Inverter o lado para o fecho e calcular o preço de proteção
                 if side == Signal.BUY:
                     # A posição original era COMPRA -> Temos de VENDER para fechar.
                     # Aceitamos vender até 1.5% ABAIXO do Bid atual para limpar o livro.
-                    execution_price = price * (1 - slippage_factor)
+                    execution_price = price * (1 + slippage_factor)
                 else:
                     # A posição original era VENDA -> Temos de COMPRAR para fechar.
                     # Aceitamos comprar até 1.5% ACIMA do Ask atual para limpar o livro.
-                    execution_price = price * (1 + slippage_factor)
+                    execution_price = price * (1 - slippage_factor)
 
                 execution_price = float(self.exchange.price_to_precision(symbol, execution_price))
             amount = float(self.exchange.amount_to_precision(symbol, amount))
@@ -555,6 +583,7 @@ class ExchangeClient(ExchangeBase, ABC):
             # market = self.exchange.market(symbol)
             # market_info = market.get('info', {})
 
+            """
             safe_order = {
                 'market_index': int(order['market_index']),
                 'client_order_index': order['client_order_index'],
@@ -566,6 +595,31 @@ class ExchangeClient(ExchangeBase, ABC):
                 'reduce_only': order['reduce_only'],
                 'trigger_price': order['trigger_price'],
                 'order_expiry': order['order_expiry'],
+                'integrator_account_index': order['integrator_account_index'],
+                'integrator_taker_fee': order['integrator_taker_fee'],
+                'integrator_maker_fee': order['integrator_maker_fee'],
+                'nonce': int(order['nonce']),
+                'api_key_index': int(apiKeyIndex),
+                'account_index': int(accountIndex),
+                'symbol': symbol,
+            }
+            """
+
+            safe_order = {
+                'market_index': int(order['market_index']),
+                'client_order_index': order['client_order_index'],
+                'base_amount': order['base_amount'],
+                'avg_execution_price': order['avg_execution_price'],
+                'is_ask': order['is_ask'],
+                # ALTERAR AQUI: Usar as constantes reais da SDK se for market, ou manter o padrão
+                'order_type': getattr(lighter, 'ORDER_TYPE_MARKET', 2) if type == 'market' else int(
+                    order['order_type']),
+                'time_in_force': getattr(lighter, 'ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL',
+                                         1) if type == 'market' else int(order['time_in_force']),
+                'reduce_only': bool(order['reduce_only']),
+                'trigger_price': order['trigger_price'],
+                'order_expiry': getattr(lighter, 'DEFAULT_IOC_EXPIRY', 0) if type == 'market' else int(
+                    order['order_expiry']),
                 'integrator_account_index': order['integrator_account_index'],
                 'integrator_taker_fee': order['integrator_taker_fee'],
                 'integrator_maker_fee': order['integrator_maker_fee'],

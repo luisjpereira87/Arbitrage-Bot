@@ -643,23 +643,37 @@ class CexBot:
                 await asyncio.sleep(2)
 
     async def run_live_test(self):
-
-        print("🚀 Iniciando teste real de venda...")
-
+        print("🚀 Iniciando teste real de abertura e fecho...")
+        symbol = "ZEC/USDC:USDC"
+        capital = 15.0
         try:
-            # 3. Executa a ordem de venda pequena
-            # Ajusta o symbol e amount para algo seguro
+            # 1. Obter preço e calcular a quantidade exata antes de abrir
+            prices = await self.lighter_exchange.get_entry_price(symbol)
+            entry_amount = self.lighter_exchange.calculate_entry_amount(prices, capital)
+
+            # 2. Abre a posição
             order = await self.lighter_exchange.open_new_position(
-                "ZEC/USDC:USDC",
+                symbol,
                 1.0,
                 Signal.SELL,
-                15.0  # Preço muito alto para a ordem não ser executada imediatamente
+                capital
             )
-            print(f"✅ Ordem enviada com sucesso! ID: {order.id}")
+            print(f"✅ Posição aberta com sucesso! ID: {order.id}")
+
+            # 3. Aguarda 5 segundos
+            await asyncio.sleep(5)
+
+            # 4. Fecha a posição usando o `entry_amount` calculado diretamente
+            print("🔄 A fechar a posição de teste...")
+            close_order = await self.lighter_exchange.close_position(
+                symbol=symbol,
+                amount=entry_amount,
+                side=Signal.BUY
+            )
+            print(f"✅ Posição fechada com sucesso: {close_order}")
 
         except Exception as e:
             print(f"❌ Ocorreu um erro no teste real:")
-            # Imprime o erro completo para sabermos se é o tal ponteiro ou a chave
             import traceback
             traceback.print_exc()
 
