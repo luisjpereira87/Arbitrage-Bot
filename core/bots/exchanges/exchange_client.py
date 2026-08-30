@@ -353,7 +353,7 @@ class ExchangeClient(ExchangeBase, ABC):
                 params[
                     'integrator_fee_recipient'] = "0x0000000000000000000000000000000000000000"  # Endereço nulo padrão
 
-            slippage_factor = 0.015
+            slippage_factor = 0.03
 
             # 3. Inverter o lado para o fecho e calcular o preço de proteção
             if side == Signal.BUY:
@@ -374,7 +374,7 @@ class ExchangeClient(ExchangeBase, ABC):
                 'market',
                 'buy' if str(side.value).lower() == 'buy' else 'sell',  # type: ignore
                 amount,
-                price,
+                execution_price,
                 params=params
             )
             logging.info(f"✅ Ordem de fechamento enviada: {order.get('info')}")  # type: ignore
