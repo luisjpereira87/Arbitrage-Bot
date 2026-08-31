@@ -248,17 +248,17 @@ class HlClient:
 
         # Condições de Alta (Bullish) - Bloqueia se o score já estiver acima de 50 (exaustão de topo)
         is_bullish = (
-                final_scores[-1] > smooth_scores[-1] and
-                final_scores[-1] > 0 and
-                final_scores[-1] > final_scores[-2] and
-                final_scores[-1] < extreme_threshold
+                final_scores[-2] > smooth_scores[-2] and
+                final_scores[-2] > 0 and
+                final_scores[-2] > final_scores[-3] and
+                final_scores[-2] < extreme_threshold
         )
 
         # Condições de Baixa (Bearish) - Bloqueia se o score já estiver abaixo de -50 (exaustão de fundo)
         is_bearish = (
-                final_scores[-1] < smooth_scores[-1] and
-                final_scores[-1] < final_scores[-2] and
-                final_scores[-1] > -extreme_threshold
+                final_scores[-2] < smooth_scores[-2] and
+                final_scores[-2] < final_scores[-3] and
+                final_scores[-2] > -extreme_threshold
         )
 
         return final_scores, smooth_scores, is_bullish, is_bearish
