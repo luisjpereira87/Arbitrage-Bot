@@ -614,9 +614,9 @@ class DeltaNeutralSniperAggressiveBot:
         # 3. 🧠 FILTRO INTELIGENTE DE RSI USANDO O MOTOR CENTRAL
         can_open_long = await self.evaluate_market_condition(MarketAction.OPEN_LONG)
         if not can_open_long:
-            self.cooldown_until = current_time + 900
+            self.cooldown_until = current_time + 300
             logging.warning(
-                "⚠️ [Filtro RSI Central] Mercado desfavorável para abrir posição (Extremos ou Momentum oposto). Cooldown de 15m.")
+                "⚠️ [Filtro RSI Central] Mercado desfavorável para abrir posição (Extremos ou Momentum oposto). Cooldown de 5m.")
             return True
 
         # 4. Verificação de Range da Hyperliquid

@@ -285,12 +285,21 @@ class ExchangeClient(ExchangeBase, ABC):
             raw_price = order.get('price')
             final_price = float(raw_price) if (raw_price is not None and str(raw_price).strip() != '') else price_ref
 
+            await asyncio.sleep(1.5)
+            open_position = await self.get_open_position(symbol)
+
+            real_entry_price = final_price
+            real_entry_amount = entry_amount
+            if open_position is not None:
+                real_entry_price = open_position.entry_price
+                real_entry_amount = open_position.size
+
             logging.info(
-                f"✅ Ordem criada: id={order.get('id')}, side={order.get('side')}, amount={order.get('amount')}, price={order.get('price')}")
+                f"✅ Ordem criada: id={order.get('id')}, side={order.get('side')}, amount={real_entry_amount}, price={real_entry_price}")
 
             return OpenedOrder(str(order.get('id') or ""), None, None, None, symbol, None,
                                str(order.get('side') or ""),
-                               final_price, order.get('amount'), False, None)
+                               real_entry_price, real_entry_amount, False, None)
 
         except Exception as e:
             logging.error(f"Erro ao criar ordem de entrada: {e}")
