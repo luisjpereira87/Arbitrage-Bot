@@ -398,8 +398,9 @@ class DeltaNeutralSniperAggressiveBot:
         # 2. STOP LOSS / INVERSÃO: O prejuízo atingiu o limite de tolerância (ex: -0.03)
         # is_turbulent, direction = await self.hl_client.is_market_turbulent(threshold=0.003)
         is_can_open_short_hedge = await self.can_open_short_hedge()
-        is_in_loss_window = max_loss_trigger <= orca_pnl <= min_loss_trigger
-        if is_in_loss_window and is_can_open_short_hedge and not is_hl_position:
+        # is_in_loss_window = max_loss_trigger <= orca_pnl <= min_loss_trigger
+        # if is_in_loss_window and is_can_open_short_hedge and not is_hl_position:
+        if orca_pnl < 0 and not is_hl_position:
             logging.warning(
                 f"🚨 Prejuízo limite atingido na Orca (${orca_pnl:.2f} <= ${loss_trigger_limit:.2f}). A abrir Short na Hyperliquid!")
             self.out_of_range_since = None
