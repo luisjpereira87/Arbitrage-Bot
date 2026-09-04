@@ -494,6 +494,110 @@ class CexBot:
             return False
     """
 
+    async def open_trade_new(self, cex_opportunity: CexOpportunity):
+        symbol = cex_opportunity.symbol
+        capital_to_trade = cex_opportunity.capital_to_trade
+        leverage = 1.0
+
+        if not await self.lighter_exchange.validate_lighter_client():
+            logging.error("❌ Abortando trade: Lighter falhou a validação de cliente.")
+            return False
+
+        # Configuração de sinais e preços de referência
+        if cex_opportunity.type == CexType.HL_TO_LIGHTER:
+            hl_signal, lighter_signal = Signal.BUY, Signal.SELL
+            hl_price, lighter_price = cex_opportunity.buy_price, cex_opportunity.sell_price
+        elif cex_opportunity.type == CexType.LIGHTER_TO_HL:
+            hl_signal, lighter_signal = Signal.SELL, Signal.BUY
+            hl_price, lighter_price = cex_opportunity.sell_price, cex_opportunity.buy_price
+        else:
+            return False
+
+        # 🟢 1. CALCULAR A QUANTIDADE ANTES DE ENVIAR (Baseado no preço de referência)
+        # Se já vem calculado no scanner como qtd_pair, usas diretamente:
+        qty = cex_opportunity.qtd_pair
+        if not qty or qty <= 0:
+            # Fallback de segurança caso o scanner não traga preenchido
+            qty = capital_to_trade / hl_price
+
+        print(f"🚀 [EXECUTOR] A enviar ordens em PARALELO para {symbol} | Qtd Pré-calculada: {qty}...")
+
+        amount_hl = float(self.hl_exchange.exchange.amount_to_precision(symbol, qty))
+        amount_lighter = float(self.lighter_exchange.exchange.amount_to_precision(symbol, qty))
+
+        if amount_hl != amount_lighter:
+            logging.warning(
+                f"🚫 [PRECISÃO] Conflito de arredondamento de lote em {symbol}: HL({amount_hl}) != Lighter({amount_lighter})")
+            return False
+
+        # 2. Passar a quantidade fixa a ambas as tarefas paralelas
+        hl_task = self.hl_exchange.open_new_position(
+            symbol=symbol,
+            leverage=leverage,
+            signal=hl_signal,
+            capital_amount=capital_to_trade,
+            price_ref=hl_price,
+            entry_amount=amount_hl
+        )
+        lighter_task = self.lighter_exchange.open_new_position(
+            symbol=symbol,
+            leverage=leverage,
+            signal=lighter_signal,
+            capital_amount=capital_to_trade,
+            price_ref=lighter_price,
+            entry_amount=amount_lighter
+        )
+
+        # 3. Execução simultânea
+        tasks_results = await asyncio.gather(hl_task, lighter_task, return_exceptions=True)
+        res_hl, res_lighter = tasks_results
+
+        hl_success = not isinstance(res_hl, Exception) and res_hl is not None
+        lighter_success = not isinstance(res_lighter, Exception) and res_lighter is not None
+
+        # Caso A: Sucesso total em ambas
+        if hl_success and lighter_success:
+            print(f"✅ [ARBITRAGEM SUCESSO] Posições abertas em paralelo com simetria de tokens!")
+
+            CexTradePosition.save_position(CexActivePosition(
+                status='OPEN',
+                symbol=symbol,
+                type=cex_opportunity.type,
+                qty_pair=amount_hl,  # Quantidade rigorosamente igual nas duas pontas
+                initial_balance_lighter_usd=cex_opportunity.lighter_balance,
+                initial_balance_hl_usd=cex_opportunity.hl_balance,
+                capital_to_trade_usd=capital_to_trade,
+                entry_price_hl=getattr(res_hl, 'price', hl_price),
+                entry_price_lighter=getattr(res_lighter, 'price', lighter_price),
+                timestamp=datetime.now().isoformat()
+            ))
+            self.active_positions = CexTradePosition.load_all_positions()
+            return True
+
+        # 🚨 CASO CRÍTICO 1: HL executou, Lighter falhou -> Rollback HL
+        if hl_success and not lighter_success:
+            print(f"🚨 [FALHA PARCIAL] Erro na Lighter: {res_lighter}. A reverter HL...")
+            inverse_hl_signal = Signal.SELL if hl_signal == Signal.BUY else Signal.BUY
+            try:
+                await self.hl_exchange.close_position(symbol, qty, inverse_hl_signal)
+                print(f"🛡️ [ROLLBACK CONCLUÍDO] Hyperliquid fechada com sucesso.")
+            except Exception as e:
+                print(f"☠️ [ERRO CRÍTICO] Falha no rollback HL: {e}")
+            return False
+
+        # 🚨 CASO CRÍTICO 2: Lighter executou, HL falhou -> Rollback Lighter
+        if lighter_success and not hl_success:
+            print(f"🚨 [FALHA PARCIAL] Erro na HL: {res_hl}. A reverter Lighter...")
+            inverse_lighter_signal = Signal.SELL if lighter_signal == Signal.BUY else Signal.BUY
+            try:
+                await self.lighter_exchange.close_position(symbol, qty, inverse_lighter_signal)
+                print(f"🛡️ [ROLLBACK CONCLUÍDO] Lighter fechada com sucesso.")
+            except Exception as e:
+                print(f"☠️ [ERRO CRÍTICO] Falha no rollback Lighter: {e}")
+            return False
+
+        return False
+
     async def execute_parallel_close(self, pos: CexActivePosition) -> bool:
         """Executa o fecho simultâneo e em paralelo de ambas as pernas da arbitragem."""
         symbol = pos.symbol
@@ -597,7 +701,7 @@ class CexBot:
                 pos, current_hl_target, current_lighter_target
             )
 
-            if net_profit_usdc > -1:
+            if net_profit_usdc > 0:
                 logging.info(f"💰 [GATILHO LUCRATIVO] {pair} está positivo em +{net_profit_usdc:.4f} USDC. A fechar!")
 
             should_close = CexBotUtils.check_viability_dynamic(

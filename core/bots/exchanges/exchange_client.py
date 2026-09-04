@@ -306,7 +306,7 @@ class ExchangeClient(ExchangeBase, ABC):
             raise
 
     async def open_new_position(self, symbol: str, leverage: float, signal: Signal, capital_amount: float,
-                                price_ref: (float | None) = None) -> (
+                                price_ref: (float | None) = None, entry_amount: (float | None) = None) -> (
             OpenedOrder | None):
 
         # if price_ref is None:
@@ -317,7 +317,8 @@ class ExchangeClient(ExchangeBase, ABC):
 
         price_ref = prices
 
-        entry_amount = self.calculate_entry_amount(price_ref, capital_amount)
+        if entry_amount is None:
+            entry_amount = self.calculate_entry_amount(price_ref, capital_amount)
         side = signal
 
         logging.info(
