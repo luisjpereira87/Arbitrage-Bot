@@ -320,7 +320,7 @@ class CexBot:
 
         return False
 
-    async def open_trade(self, cex_opportunity: CexOpportunity):
+    async def open_trade_old(self, cex_opportunity: CexOpportunity):
         symbol = cex_opportunity.symbol
         capital_to_trade = cex_opportunity.capital_to_trade
         qty = cex_opportunity.qtd_pair
@@ -494,7 +494,7 @@ class CexBot:
             return False
     """
 
-    async def open_trade_new(self, cex_opportunity: CexOpportunity):
+    async def open_trade(self, cex_opportunity: CexOpportunity):
         symbol = cex_opportunity.symbol
         capital_to_trade = cex_opportunity.capital_to_trade
         leverage = 1.0
